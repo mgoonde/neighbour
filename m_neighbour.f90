@@ -90,7 +90,7 @@ contains
     !> output list of neighbours to atom `idx`
     integer, allocatable, intent(out)   :: list(:)
 
-    !> size of returned `list` is `(n)`, if `idx` is invalid `n=-1`
+    !> `n`, size of returned `list` is `(n)`; if `idx` is invalid `n=-1`
     integer :: n
 
     integer :: i_start, i_end
@@ -127,7 +127,7 @@ contains
     !> output list of vectors neighbour to `idx`
     real(rp), allocatable               :: veclist(:,:)
 
-    !> size of returned `veclist` is `(3, n)`, if `idx` is invalid `n=-1`
+    !> `n`, size of returned `veclist` is `(3, n)`; if `idx` is invalid `n=-1`
     integer :: n
 
     integer :: i_start, i_end

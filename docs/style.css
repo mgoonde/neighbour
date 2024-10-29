@@ -1,0 +1,22 @@
+.container{
+  width: 100%;
+  max-width: 1800px;
+}
+
+.depgraph{
+	width: 100%;
+	max-width: 1800px;
+}
+
+.col-md-3{
+	width: 80%;
+}
+
+.col-md-9{
+	width:99%;
+}
+
+.card{
+	width: 100%;
+	max-width: 1800px;
+}
