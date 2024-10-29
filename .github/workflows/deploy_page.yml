@@ -53,6 +53,7 @@ jobs:
           --exclude=.github \
           -cvf "$RUNNER_TEMP/artifact.tar" \
           --directory=docs/public .
+          ls -l ${{ runner.temp }}
           
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
