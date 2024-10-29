@@ -29,7 +29,7 @@ program main
   !
   ! get list of neighbors of atom `my_idx`:
   block
-    integer :: my_idx
+    integer :: my_idx, n_list
     integer, allocatable :: list(:)
     n_list = neigh% get_list( my_idx, list )
   end block
@@ -37,7 +37,7 @@ program main
   !
   ! get the vectors of neighbours of atom `my_idx`:
   block
-    integer :: my_idx
+    integer :: my_idx, n_list
     real(wp), allocatable :: veclist(:,:)
     n_list = neigh% get_veclist( my_idx, veclist )
   end block
