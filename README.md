@@ -1,12 +1,22 @@
-pbc neighbour list in fortran, using bins.
+# Description:
 
-Compile:
+Periodic Boundary Conditions (pbc) neighbour list in fortran, using bins.
+Encapsulated in a derived type [t_neighbour](https://mgoonde.github.io/neighbour/type/t_neighbour.html).
+
+
+
+# Compile:
+
+Compile the object with some useful flags:
 
 ```bash
 gfortran -g -O2 -march=native -ffast-math -funroll-loops -c m_neighbour.f90
 ```
 
-Use in program:
+# Caller program:
+
+To compile: link your program with `m_neighbour.o` compiled as above, and set the `-I` to this directory.
+Pseudocode example program:
 
 ```f90
 program main
