@@ -36,7 +36,7 @@ jobs:
          python3 -m pip install ford==7.0.8
 
       - name: build
-        run: ls -a ${{github.workspace }} && cd docs && ford ford.md
+        run: ls -a ${{github.workspace }} && cd docs && ford ford.md 
         #run: sphinx-build -b html docs public
       #- run: make html
       
@@ -45,6 +45,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           ls -a ${{github.workspace }}
+          ls -a ${{github.workspace}}/docs
           tar \
           --dereference --hard-dereference \
           --exclude=.git \
