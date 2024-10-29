@@ -36,7 +36,9 @@ jobs:
          python3 -m pip install ford==7.0.8
 
       - name: build
-        run: ls -a ${{github.workspace }} && cd docs && ford ford.md 
+        run: |
+          ls -a ${{github.workspace }} 
+          cd docs && ford ford.md 
         
       
       - name: Archive artifact
@@ -72,6 +74,11 @@ jobs:
     # Specify runner + deployment step
     runs-on: ubuntu-latest
     steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: github-pages
+          
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v3 # or the latest "vX.X.X" version tag for this action
