@@ -16,6 +16,8 @@ gfortran -g -O2 -march=native -ffast-math -funroll-loops -c m_neighbour.f90
 # Caller program:
 
 To compile: link your program with `m_neighbour.o` compiled as above, and set the `-I` to this directory.
+See also the `example` directory.
+
 Pseudocode example program:
 
 ```f90

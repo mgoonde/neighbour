@@ -13,33 +13,50 @@ program main
   integer :: n, idx
   integer :: i, j
   real(rp), allocatable :: veclist(:,:)
+  character(256) :: line
+  integer :: n_begin, n_end
 
-  rcut = 6.0_rp
 
+  ! read xyz
   read(*,*) nat
-  read(*,*) lat
+  read(*,'(a256)') line
+  n_begin = index(line, "Lattice=") + 9
+  line = line(n_begin:)
+  n_end = index(line,'"')-1
+  line = line(:n_end)
+  read(line, *) lat
   allocate( typ(1:nat) )
   allocate( pos(1:3,1:nat))
   do i = 1, nat
      read(*,*) typ(i), pos(:,i)
   end do
 
+  ! cutoff radius
+  rcut = 6.0_rp
 
+  ! launch neighbour list
   neigh => t_neighbour( nat, typ, pos, lat, rcut )
 
+
+  ! print list of atom index 3
   idx = 3
   n = neigh% get_list( idx, list )
-  ! write(*,*) n
-  ! write(*,*) list
+  write(*,*) n
+  write(*,*) list
 
+  ! print vectors of idx=3
   n = neigh% get_veclist( idx, veclist )
+  ! it does not include the idx itself, include it manually
   write(*,*) n+1
   write(*,*)
-  write(*,*) 1, [0.0_rp, 0.0_rp, 0.0_rp]
+  ! vector of idx is assumed at zero
+  write(*,*) typ(idx), [0.0_rp, 0.0_rp, 0.0_rp]
   do i = 1, n
      write(*,*) typ(list(i)),veclist(:,i)
   end do
 
+
+  ! output the neigbor list of all atoms
   ! deallocate( list, veclist )
   ! do i = 1, nat
   !    idx = i
@@ -53,7 +70,8 @@ program main
 
 
   deallocate( typ, pos )
-  ! deallocate( list )
+  deallocate( list )
+  deallocate( veclist )
   deallocate( neigh )
 
 contains

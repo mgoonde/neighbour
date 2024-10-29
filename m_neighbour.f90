@@ -1,7 +1,7 @@
 module m_neighbour
 
   implicit none
-  integer, parameter :: rp = kind(1.0)
+  integer, parameter :: rp = kind(1.0)    ! modify precision as needed
 
   integer, parameter :: &
        first_alloc = 100, & ! allocate to first_alloc*nat
