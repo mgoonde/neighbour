@@ -577,14 +577,14 @@ contains
     real(RP), dimension(3),intent(inout) :: c
     integer :: i
 
-    ! do i = 1, 3
-    !    if( c(i) .lt. -0.5 ) c(i) = c(i) + 1.0
-    !    if( c(i) .ge. 0.5 ) c(i) = c(i) - 1.0
-    ! end do
+    do i = 1, 3
+       if( c(i) .lt. -0.5 ) c(i) = c(i) + 1.0
+       if( c(i) .ge. 0.5 ) c(i) = c(i) - 1.0
+    end do
 
-    c(1) = c(1) - int( (c(1)/ 0.5_rp) )
-    c(2) = c(2) - int( (c(2)/ 0.5_rp) )
-    c(3) = c(3) - int( (c(3)/ 0.5_rp) )
+    ! c(1) = c(1) - int( (c(1)/ 0.5_rp) )
+    ! c(2) = c(2) - int( (c(2)/ 0.5_rp) )
+    ! c(3) = c(3) - int( (c(3)/ 0.5_rp) )
   end subroutine periodic
 
 
@@ -715,3 +715,4 @@ contains
 
 
 end module m_neighbour
+
