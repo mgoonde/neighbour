@@ -3,56 +3,49 @@ module m_neighbour
   implicit none
   integer, parameter :: rp = kind(1.0)    ! modify precision as needed
 
+  private
+  public :: rp
+  public :: t_neighbour
+
   integer, parameter :: &
        first_alloc = 100, & ! allocate to first_alloc*nat
        batch_size = 20 ! if lists exceed first_alloc, increase in steps of batch_size*nat
 
 
-  !> single bin
-  type t_bin
-     integer :: tag
-     integer, private :: batchsize = 200
-     integer :: n_members=0
-     integer :: n_tot=0
-     integer, allocatable :: global_idx_of_member(:)
-     real(rp), allocatable :: pos_member(:,:)
-     real( rp ) :: center(3)
-   contains
-     procedure :: bin_add
-  end type t_bin
-
-
   !> neigbour object
-  type t_neighbour
+  type, public :: t_neighbour
 
      ! total size of arrays
      integer, private :: ntot = 0
      ! current head_idx
      integer, private :: head_idx = 0
 
-
-     !> flag to indicate if neighbor list is computed or not
-     integer :: active = -1
-
-     !> distance cutoff value
-     real(rp) :: rcut
-
-     !> number of neighbors of atom i (excluding self)
+     !> number of neighbors of atom `i` (excluding self)
      integer, pointer, contiguous :: nneig(:)
 
-     !> concatenated list of neigbors (excluding idx)
+     !> concatenated list of neigbors (excluding `idx`)
      integer, pointer, contiguous :: neiglist(:)
 
      !> concatenated list of vectors of neiglist in pbc (vector for idx is excluded,
-     !! but assumed to be placed at [0.0, 0.0, 0.0] )
+     !! but assumed to be placed at `[0.0, 0.0, 0.0]` )
      real(rp), pointer, contiguous :: veclist(:,:)
 
-     integer, allocatable, private :: partial_sumlist(:)
-
-     integer :: bin_tag=1
+     !> partial sums of `nneig(:)`, used for retrieving the slices of
+     !! arrays `neiglist(:)` and `veclist(:,:)` which correspond to a certain atom
+     integer, allocatable :: partial_sumlist(:)
 
      !> list of bins
-     type( t_bin ), allocatable :: bins(:,:,:)
+     type( t_bin ), allocatable, private :: bins(:,:,:)
+
+
+     !> |unused| flag to indicate if neighbor list is computed or not
+     integer, private :: active = -1
+
+     !> |unused| distance cutoff value
+     real(rp), private :: rcut
+
+     !> |unused|
+     integer, private :: bin_tag=1
    contains
      procedure :: get_list
      procedure :: get_veclist
@@ -60,9 +53,39 @@ module m_neighbour
      final :: t_neighbour_destroy
   end type t_neighbour
 
+  !> overload the function `compute_binned_pbc` with name `t_neighbour`
   interface t_neighbour
      procedure :: compute_binned_pbc
   end interface t_neighbour
+
+
+
+  !> single bin
+  type, private :: t_bin
+     ! not needed
+     integer :: tag
+
+     ! (re-)allocation size
+     integer, private :: batchsize = 200
+
+     ! current number of atoms in bin
+     integer :: n_members=0
+
+     ! current allocation size
+     integer :: n_tot=0
+
+     ! indices of bin members
+     integer, allocatable :: global_idx_of_member(:)
+
+     ! position vectors of bin members
+     real(rp), allocatable :: pos_member(:,:)
+
+     ! unused
+     real( rp ) :: center(3)
+   contains
+     procedure :: bin_add
+  end type t_bin
+
 
 
 
@@ -78,7 +101,7 @@ contains
 
 
 
-  function get_list( self, idx, list )result(n)
+  function get_list( self, idx, list, sort_by )result(n)
     !! Output the `list` of indices from neiglist, which are neighbours of `idx`.
     !! Return `n` which i sthe size of `list`
     !! The index `idx` is NOT included in the returned array `list`.
@@ -90,13 +113,19 @@ contains
     !> output list of neighbours to atom `idx`
     integer, allocatable, intent(out)   :: list(:)
 
-    !> `n`, size of returned `list` is `(n)`; if `idx` is invalid `n=-1`
+    !> optional string to sort the output list; possible values `"distance"`, `"index"`
+    character(*), intent(in), optional :: sort_by
+
+    !> `n`, size of returned `list` is `(n)`; if `idx` is invalid, or the
+    !! neighbour list has not been computed `n=-1`
     integer :: n
 
     integer :: i_start, i_end
 
-    if( idx .le. 0 .or. idx .gt. size(self% nneig) ) then
-       ! idx out of range
+    if(  idx .le. 0 .or. &
+         idx .gt. size(self% nneig) .or. &
+         .not.allocated(self%partial_sumlist) ) then
+       ! idx out of range, or list not computed
        n = -1
        return
     end if
@@ -111,11 +140,32 @@ contains
     n = i_end - i_start + 1
     allocate( list(1:n), source=self% neiglist(i_start:i_end))
 
+    if( present(sort_by)) then
+       select case( sort_by )
+       case( "index" )
+          call bubble_sort_i1d( list )
+       case( "distance" )
+          block
+            real(rp), allocatable :: veclist(:,:)
+            real(rp), allocatable :: d_o(:,:)
+            integer :: i
+            allocate( veclist, source=self% veclist(1:3, i_start:i_end) )
+            allocate( d_o(1:2, 1:n) )
+            do i = 1, n
+               d_o(1,i) = norm2( veclist(:,i) )
+               d_o(2,i) = real(i, rp)
+            end do
+            call bubble_sort_r2d( n, d_o )
+            list = list( nint(d_o(2,:)) )
+            deallocate( veclist, d_o )
+          end block
+       end select
+    end if
   end function get_list
 
 
 
-  function get_veclist( self, idx, veclist )result(n)
+  function get_veclist( self, idx, veclist, sort_by )result(n)
     !! Output vectors from `veclist`, which are neighbors of `idx`.
     !! Return `n` which is the size of `veclist`
     !! The vector of atom `idx` is NOT included, but is placed at (0.0, 0.0, 0.0)
@@ -127,13 +177,19 @@ contains
     !> output list of vectors neighbour to `idx`
     real(rp), allocatable               :: veclist(:,:)
 
-    !> `n`, size of returned `veclist` is `(3, n)`; if `idx` is invalid `n=-1`
+    !> optional string to sort the output list; possible values `"distance"`, `"index"`
+    character(*), intent(in), optional :: sort_by
+
+    !> `n`, size of returned `list` is `(n)`; if `idx` is invalid, or the
+    !! neighbour list has not been computed `n=-1`
     integer :: n
 
     integer :: i_start, i_end
 
-    if( idx .le. 0 .or. idx .gt. size(self% nneig) ) then
-       ! idx out of range
+    if(  idx .le. 0 .or. &
+         idx .gt. size(self% nneig) .or. &
+         .not.allocated(self%partial_sumlist)) then
+       ! idx out of range, or neiglist not computed
        n = -1
        return
     end if
@@ -144,6 +200,33 @@ contains
 
     n = i_end - i_start + 1
     allocate( veclist, source=self% veclist(1:3, i_start:i_end) )
+
+    if( present(sort_by)) then
+       select case( sort_by )
+       case( "index" )
+          block
+            integer, allocatable :: list(:)
+            allocate( list(1:n), source=self% neiglist(i_start:i_end))
+            call bubble_sort_i1d( list )
+            veclist(:,:) = veclist(:, list)
+            deallocate( list )
+          end block
+
+       case( "distance" )
+          block
+            real(rp), allocatable :: d_o(:,:)
+            integer :: i
+            allocate( d_o(1:2, 1:n) )
+            do i = 1, n
+               d_o(1,i) = norm2( veclist(:,i) )
+               d_o(2,i) = real(i, rp)
+            end do
+            call bubble_sort_r2d( n, d_o )
+            veclist(:,:) = veclist(:, nint(d_o(2,:)) )
+            deallocate( d_o )
+          end block
+       end select
+    end if
 
   end function get_veclist
 
@@ -712,6 +795,55 @@ contains
        kadd = k_cp
     end if
   end function check3
+
+  ! bubble sort, modified from rosetta code:
+  ! https://rosettacode.org/wiki/Sorting_algorithms/Bubble_sort#Fortran
+  subroutine bubble_sort_i1d(a)
+    integer, intent(inout), dimension(:) :: a
+    integer :: temp
+    integer :: i, j
+    logical :: swapped
+
+    do j = size(a)-1, 1, -1
+       swapped = .false.
+       do i = 1, j
+          if (a(i) > a(i+1)) then
+             temp = a(i)
+             a(i) = a(i+1)
+             a(i+1) = temp
+             swapped = .true.
+          end if
+       end do
+       if (.not. swapped) exit
+    end do
+  end subroutine bubble_sort_i1d
+  ! d_o(1, :) = d
+  ! d_o(2, :) = o
+  subroutine bubble_sort_r2d( dim, a )
+    integer, intent(in) :: dim
+    real(rp), intent(inout), dimension(2,dim) :: a
+    real(rp) :: temp(2)
+    integer :: i, j
+    logical :: swapped
+
+    do j = dim-1, 1, -1
+       swapped = .false.
+       do i = 1, j
+          if (a(1, i) > a(1, i+1)) then
+             temp(1) = a(1,i)
+             temp(2) = a(2,i)
+
+             a(1,i) = a(1,i+1)
+             a(2,i) = a(2,i+1)
+
+             a(1,i+1) = temp(1)
+             a(2,i+1) = temp(2)
+             swapped = .true.
+          end if
+       end do
+       if (.not. swapped) exit
+    end do
+  end subroutine bubble_sort_r2d
 
 
 end module m_neighbour

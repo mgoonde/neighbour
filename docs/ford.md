@@ -10,6 +10,7 @@ graph: true
 search: false
 css: style.css
 output_dir: public
+alias: unused = >>__NOTE__: unused<<;
 ---
 
 {!../README.md!}
