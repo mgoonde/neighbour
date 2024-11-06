@@ -101,7 +101,7 @@ contains
 
 
 
-  function get_list( self, idx, list, sort_by )result(n)
+  function get_list( self, idx, list )result(n)
     !! Output the `list` of indices from neiglist, which are neighbours of `idx`.
     !! Return `n` which i sthe size of `list`
     !! The index `idx` is NOT included in the returned array `list`.
@@ -112,9 +112,6 @@ contains
 
     !> output list of neighbours to atom `idx`
     integer, allocatable, intent(out)   :: list(:)
-
-    !> optional string to sort the output list; possible values `"distance"`, `"index"`
-    character(*), intent(in), optional :: sort_by
 
     !> `n`, size of returned `list` is `(n)`; if `idx` is invalid, or the
     !! neighbour list has not been computed `n=-1`
@@ -140,32 +137,11 @@ contains
     n = i_end - i_start + 1
     allocate( list(1:n), source=self% neiglist(i_start:i_end))
 
-    if( present(sort_by)) then
-       select case( sort_by )
-       case( "index" )
-          call bubble_sort_i1d( list )
-       case( "distance" )
-          block
-            real(rp), allocatable :: veclist(:,:)
-            real(rp), allocatable :: d_o(:,:)
-            integer :: i
-            allocate( veclist, source=self% veclist(1:3, i_start:i_end) )
-            allocate( d_o(1:2, 1:n) )
-            do i = 1, n
-               d_o(1,i) = norm2( veclist(:,i) )
-               d_o(2,i) = real(i, rp)
-            end do
-            call bubble_sort_r2d( n, d_o )
-            list = list( nint(d_o(2,:)) )
-            deallocate( veclist, d_o )
-          end block
-       end select
-    end if
   end function get_list
 
 
 
-  function get_veclist( self, idx, veclist, sort_by )result(n)
+  function get_veclist( self, idx, veclist )result(n)
     !! Output vectors from `veclist`, which are neighbors of `idx`.
     !! Return `n` which is the size of `veclist`
     !! The vector of atom `idx` is NOT included, but is placed at (0.0, 0.0, 0.0)
@@ -176,9 +152,6 @@ contains
 
     !> output list of vectors neighbour to `idx`
     real(rp), allocatable               :: veclist(:,:)
-
-    !> optional string to sort the output list; possible values `"distance"`, `"index"`
-    character(*), intent(in), optional :: sort_by
 
     !> `n`, size of returned `list` is `(n)`; if `idx` is invalid, or the
     !! neighbour list has not been computed `n=-1`
@@ -201,39 +174,12 @@ contains
     n = i_end - i_start + 1
     allocate( veclist, source=self% veclist(1:3, i_start:i_end) )
 
-    if( present(sort_by)) then
-       select case( sort_by )
-       case( "index" )
-          block
-            integer, allocatable :: list(:)
-            allocate( list(1:n), source=self% neiglist(i_start:i_end))
-            call bubble_sort_i1d( list )
-            veclist(:,:) = veclist(:, list)
-            deallocate( list )
-          end block
-
-       case( "distance" )
-          block
-            real(rp), allocatable :: d_o(:,:)
-            integer :: i
-            allocate( d_o(1:2, 1:n) )
-            do i = 1, n
-               d_o(1,i) = norm2( veclist(:,i) )
-               d_o(2,i) = real(i, rp)
-            end do
-            call bubble_sort_r2d( n, d_o )
-            veclist(:,:) = veclist(:, nint(d_o(2,:)) )
-            deallocate( d_o )
-          end block
-       end select
-    end if
-
   end function get_veclist
 
 
 
 
-  function compute_binned_pbc( nat, ityp, pos, lat, rcut )result(self)
+  function compute_binned_pbc( nat, ityp, pos, lat, rcut, sort_by )result(self)
     !! Compute the neighbour list in pbc.
     !! The idea is to actually detect the boundaries of the box, and set properly shifted
     !! fake atoms to the other side of the box, and do this on all sides (hi, and lo).
@@ -268,6 +214,9 @@ contains
     !> distance cutoff, in units of `pos`
     real(rp), intent(in) :: rcut
 
+    !> optional string to sort the neighbour list; possible values `"distance"`, `"index"`
+    character(*), intent(in), optional :: sort_by
+
     !> t_neighbour class
     type( t_neighbour ), pointer :: self
 
@@ -283,6 +232,8 @@ contains
     real(rp) :: kvec(3), kmax, lo_buffer, hi_buffer
     integer :: jj_lb, kk_lb, ll_lb
     integer :: jj_ub, kk_ub, ll_ub
+    integer :: i_start, i_end, n
+    real(rp), allocatable :: d_o(:,:)
 
 
     ! cutoff square
@@ -520,6 +471,29 @@ contains
           self% partial_sumlist(1) = self% nneig(1)
        else
           self% partial_sumlist(i) = self% partial_sumlist(i-1) + self% nneig(i)
+       end if
+
+
+       ! optional sorting
+       if( present( sort_by ) ) then
+          i_end = self% partial_sumlist(i)
+          i_start = i_end - self% nneig(i)+1
+          n = i_end - i_start + 1
+          select case( sort_by )
+          case( "index")
+             call bubble_sort_i1d( self% neiglist(i_start:i_end))
+          case( "distance" )
+             allocate( d_o(1:2,1:n) )
+             do ii = 1, n
+                ! distance
+                d_o(1,ii) = norm2( self% veclist(1:3, i_start+ii-1) )
+                ! actual index
+                d_o(2,ii) = real(i_start+ii-1,rp)
+             end do
+             call bubble_sort_r2d( n, d_o )
+             self% veclist( 1:3, i_start:i_end ) = self% veclist(1:3, nint(d_o(2,:)) )
+             deallocate( d_o )
+          end select
        end if
 
     end do
