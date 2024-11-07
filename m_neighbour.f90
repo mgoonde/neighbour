@@ -8,6 +8,7 @@ module m_neighbour
   public :: t_neighbour
 
   integer, parameter :: &
+       bin_batchsize = 200, &
        first_alloc = 100, & ! allocate to first_alloc*nat
        batch_size = 20 ! if lists exceed first_alloc, increase in steps of batch_size*nat
 
@@ -63,10 +64,10 @@ module m_neighbour
   !> single bin
   type, private :: t_bin
      ! not needed
-     integer :: tag
+     integer :: tag=0
 
      ! (re-)allocation size
-     integer, private :: batchsize = 200
+     integer, private :: batchsize = bin_batchsize
 
      ! current number of atoms in bin
      integer :: n_members=0
@@ -85,7 +86,6 @@ module m_neighbour
    contains
      procedure :: bin_add
   end type t_bin
-
 
 
 
@@ -172,7 +172,7 @@ contains
     i_start = i_end - self% nneig(idx)+1
 
     n = i_end - i_start + 1
-    allocate( veclist, source=self% veclist(1:3, i_start:i_end) )
+    allocate( veclist, source=self% veclist(:, i_start:i_end) )
 
   end function get_veclist
 
@@ -205,11 +205,11 @@ contains
     !> integer atomic types (actually unused)
     integer, intent(in) :: ityp(nat)
 
-    !> atomic positions, shape(3,nat)
-    real(rp), intent(in) :: pos(3,nat)
+    !> atomic positions, shape(ndim, nat)
+    real(rp), intent(in) :: pos(:,:)
 
     !> lattice vectors in rows, in units of `pos`
-    real(rp), intent(in) :: lat(3,3)
+    real(rp), intent(in) :: lat(size(pos,1), size(pos,1))
 
     !> distance cutoff, in units of `pos`
     real(rp), intent(in) :: rcut
@@ -221,20 +221,24 @@ contains
     type( t_neighbour ), pointer :: self
 
     integer :: i, j, ii, jj, kk, ll, mm
-    real(rp) :: dij, rij(3)
-    real(rp) :: invlat(3,3)
-    real(rp) :: r(3), rf(3), kadd(3)
-    integer, dimension(3) :: ibin, addbin
+    real(rp) :: dij
+    real(rp), dimension(size(pos,1), size(pos,1)) :: invlat
+    real(rp), dimension(size(pos,1)) :: r, rf, rij, kvec
+    integer, dimension(3) :: ibin, addbin ! keep dimension 3, for lower dim they just contain no data
     integer :: xbin, ybin, zbin
     real(rp) :: rcut2
 
-    integer :: nbins, nbins_check
-    real(rp) :: kvec(3), kmax, lo_buffer, hi_buffer
+    integer, dimension(3) :: nbins, nbins_check
+    integer :: ndim, idim
+    real(rp), dimension(3) :: kmax, kadd
+    real(rp), dimension(3) :: lo_buffer, hi_buffer
     integer :: jj_lb, kk_lb, ll_lb
     integer :: jj_ub, kk_ub, ll_ub
     integer :: i_start, i_end, n
     real(rp), allocatable :: d_o(:,:)
 
+    ndim = size( pos,1 )
+    ! self% ndim = ndim
 
     ! cutoff square
     rcut2 = rcut*rcut
@@ -242,7 +246,7 @@ contains
     allocate( t_neighbour::self )
 
     ! inverse lattice
-    call inverse3x3( lat, invlat)
+    call inverse( lat, invlat)
 
     ! maximal "displacement vector" in cartesian coords ...
     ! this is an overshoot proportional to sqrt(3.0)*rcut in a cubic box,
@@ -250,12 +254,15 @@ contains
     ! Is probably not optimal, but good-enough for now. Boxes with weird shapes
     ! could be problematic from this point of view (e.g. some ax similar norm
     ! to rcut, while others much larger).
-    kvec(:) = rcut
+    kvec(:) = rcut*1.0_rp
     ! see how this vector transforms to crist coords
     call cart_to_crist(kvec, lat, invlat)
     ! take the maxval as unified cutoff distance in crist coords over all axes
-    ! (this should maybe resolve to i,j,k axes at some point?)
-    kmax = maxval(abs(kvec))
+    ! kmax = maxval(abs(kvec))
+    kmax(:) = maxval(abs(kvec))
+    do idim = 1, ndim
+       kmax(idim) = abs(kvec(idim))
+    end do
 
     ! write(*,*) "kvec:", kvec
     ! write(*,*) 1.0/kvec(1)
@@ -264,14 +271,17 @@ contains
     ! take the floor() for nbins, since fewer bins means each bin is larger in size
     nbins = floor(1.0_rp/kmax)
     ! protection against zero bins
-    nbins = max(1,nbins)
+    do idim = 1, ndim
+       nbins(idim) = max(1,nbins(idim))
+    end do
+
     ! nbins = nint(1.0_rp/kmax)
     ! nbins = 64
     ! nbins_check = ceiling(1.0_rp/kmax)
 
     allocate( self% nneig(1:nat), source=0)
     allocate( self% neiglist(1:first_alloc*nat) )
-    allocate( self% veclist(1:3,1:first_alloc*nat) )
+    allocate( self% veclist(1:ndim,1:first_alloc*nat) )
     allocate( self% partial_sumlist(1:nat) )
     self% partial_sumlist(1) = 0
     ! save first ntot (alloc size)
@@ -283,14 +293,23 @@ contains
     lo_buffer = kmax
     ! buffer region near high-end
     ! hi_buffer = 0.5-kmax
-    hi_buffer = 1.0_rp-kmax
+    hi_buffer(:) = 1.0_rp
+    do idim = 1, ndim
+       hi_buffer(idim) = 1.0_rp-kmax(idim)
+    end do
+
 
     ! write(*,*) "lo_buffer =",lo_buffer
     ! write(*,*) "hi_buffer =",hi_buffer
     ! write(*,*) "nbins=",nbins
 
     ! create bins
-    allocate( self% bins(0:nbins+1, 0:nbins+1, 0:nbins+1) )
+    allocate( self% bins(0:nbins(1)+1, 0:nbins(2)+1, 0:nbins(3)+1) )
+    ! init bins to zero
+    self% bins(:,:,:)% n_members = 0
+    self% bins(:,:,:)% n_tot = 0
+    self% bins(:,:,:)% tag = 0
+
     do i = 1, nat
        r = pos(:,i)
 
@@ -299,7 +318,7 @@ contains
        ! shift to -0.5:0.5
        call periodic(r)
        ! shift to 0:1
-       r = r + [0.5_rp, 0.5_rp, 0.5_rp ]
+       r = r + [( 0.5_rp, idim=1,ndim )]
 
        ! write(*,*)
        ! write(*,*) " ==> idx i:",i
@@ -307,8 +326,14 @@ contains
        ! write(*,*) r*4
 
        ! compute bin of this atom in reciprocal
-       ! ibin goes from 1 to nbins
-       ibin = [floor(r*nbins)] + [1,1,1]
+       ! ibin goes from 1 to nbins.
+       ! for ndim<3, the ibin keeps dimension 3, but has value 1 for extra dims
+       ibin(:) = 1
+       do idim = 1, ndim
+          ! ibin(idim) = floor( r(idim)*nbins(idim) ) + 1
+          ibin(idim) = nint( r(idim)*nbins(idim) )
+       end do
+
 
        ! write(*,"(a,1x,3i4, 3f9.4)") "ibin:",ibin, r
 
@@ -323,16 +348,16 @@ contains
        ! of the box. The fake atom has its coords shifted by appropriate vector.
 
        ! single components (boundary planes)
-       do ii = 1, 3
+       do ii = 1, ndim
           addbin = ibin
           kadd = 0.0_rp
-          if( check1( r(ii), kmax, kadd(ii)) ) then
+          if( check1( r(ii), kmax(ii), kadd(ii)) ) then
              ! need to add shifted atm
-             rf = r + kadd
+             rf = r + kadd(1:ndim)
 
              ! which bin to add? assume low-end, if kadd=1.0 then it's high-end
              addbin(ii) = 1
-             if( kadd(ii) > 0.5_rp ) addbin(ii) = nbins
+             if( kadd(ii) > 0.5_rp ) addbin(ii) = nbins(ii)
 
              call crist_to_cart( rf, lat, invlat )
              call self% bins( addbin(1), addbin(2), addbin(3))% bin_add( 11, i, rf )
@@ -340,15 +365,15 @@ contains
        end do
 
        ! two components simultaneously (boundary edges)
-       do ii = 1, 3
-          do jj = ii+1, 3
+       do ii = 1, ndim
+          do jj = ii+1, ndim
              addbin = ibin
              kadd = 0.0_rp
              if( check2( r, ii, jj, kmax, kadd ) )then
                 ! which bin: high-end where kadd=1.0; low-end where kadd=-1.0
                 addbin = merge( nbins, addbin, kadd > 0.5_rp )
                 addbin = merge( 1, addbin, kadd < -0.5_rp )
-                rf = r + kadd
+                rf = r + kadd(1:ndim)
                 call crist_to_cart( rf, lat, invlat )
                 call self% bins( addbin(1), addbin(2), addbin(3))% bin_add( 12, i, rf )
              end if
@@ -356,16 +381,16 @@ contains
        end do
 
        ! three components simultaneously (boundary corners)
-       do ii = 1, 3
-          do jj = ii+1, 3
-             do kk = jj+1, 3
+       do ii = 1, ndim
+          do jj = ii+1, ndim
+             do kk = jj+1, ndim
                 addbin = ibin
                 kadd = 0.0_rp
                 if( check3( r, ii, jj, kk, kmax, kadd) ) then
                    ! which bin: high-end where kadd=1.0; low-end where kadd=-1.0
                    addbin = merge( nbins, addbin, kadd > 0.5_rp )
                    addbin = merge( 1, addbin, kadd < -0.5_rp )
-                   rf = r + kadd
+                   rf = r + kadd(1:ndim)
                    call crist_to_cart( rf, lat, invlat )
                    call self% bins( addbin(1), addbin(2), addbin(3))% bin_add( 13, i, rf )
                 end if
@@ -390,10 +415,15 @@ contains
        ! shift inside box; range 0:1 in crist
        call cart_to_crist( r, lat, invlat )
        call periodic( r )
-       r = r + [0.5_rp, 0.5_rp, 0.5_rp ]
+       ! r = r + [0.5_rp, 0.5_rp, 0.5_rp ]
+       r = r + [( 0.5_rp, i=1,ndim )]
 
        ! find my bin in reciprocal
-       ibin = [floor(r*nbins)] + [1,1,1]
+       ibin(:) = 1
+       do idim = 1, ndim
+          ! ibin(idim) = floor( r(idim)*nbins(idim) ) + 1
+          ibin(idim) = nint( r(idim)*nbins(idim) )
+       end do
 
        ! write(*,*) r
        ! write(*,"(a,1x,3i4,3f9.4)")"ibin",ibin,r
@@ -420,15 +450,15 @@ contains
        kk_ub = 1
        ll_ub = 1
 
-       ! if we are in bin=1 (low-edge), no need to check the -1 bin
-       ! if( ibin(1) == 1 ) jj_lb = 0
-       ! if( ibin(2) == 1 ) kk_lb = 0
-       ! if( ibin(3) == 1 ) ll_lb = 0
+       ! if we are in bin=0 (low-edge), no need to check the -1 bin
+       if( ibin(1) == 0 ) jj_lb = 0
+       if( ibin(2) == 0 ) kk_lb = 0
+       if( ibin(3) == 0 ) ll_lb = 0
 
-       ! if we are in the bin=nbins (high-edge), no need to check the +1 bin
-       ! if( ibin(1) == nbins ) jj_ub = 0
-       ! if( ibin(2) == nbins ) kk_ub = 0
-       ! if( ibin(3) == nbins ) ll_ub = 0
+       ! if we are in the bin=nbins+1 (high-edge), no need to check the +1 bin
+       if( ibin(1) == nbins(1)+1 ) jj_ub = 0
+       if( ibin(2) == nbins(2)+1 ) kk_ub = 0
+       if( ibin(3) == nbins(3)+1 ) ll_ub = 0
 
        ! write(*,*) i, "ibin",ibin
        ! write(*,*) "jj_lb", jj_lb, "jj_ub", jj_ub
@@ -451,7 +481,8 @@ contains
                    rij = self% bins( xbin, ybin, zbin )% pos_member(:,ii) - r
 
                    ! distance square from i to j
-                   dij = rij(1)*rij(1) + rij(2)*rij(2) + rij(3)*rij(3)
+                   ! dij = rij(1)*rij(1) + rij(2)*rij(2) + rij(3)*rij(3)
+                   dij = dot_product(rij,rij)
 
                    ! write(*,'(i16,1x,3f9.4,5x,f9.4)') ii, self%bins(xbin,ybin,zbin)%pos_member(:,ii), sqrt(dij)
                    if( dij .le. rcut2 ) then
@@ -486,12 +517,12 @@ contains
              allocate( d_o(1:2,1:n) )
              do ii = 1, n
                 ! distance
-                d_o(1,ii) = norm2( self% veclist(1:3, i_start+ii-1) )
+                d_o(1,ii) = norm2( self% veclist(1:ndim, i_start+ii-1) )
                 ! actual index
                 d_o(2,ii) = real(i_start+ii-1,rp)
              end do
              call bubble_sort_r2d( n, d_o )
-             self% veclist( 1:3, i_start:i_end ) = self% veclist(1:3, nint(d_o(2,:)) )
+             self% veclist( 1:3, i_start:i_end ) = self% veclist(1:ndim, nint(d_o(2,:)) )
              deallocate( d_o )
           end select
        end if
@@ -508,19 +539,23 @@ contains
     class( t_bin ), intent(inout) :: self
     integer, intent(in) :: bin_tag
     integer, intent(in) :: idx
-    real(rp), intent(in) :: vec(3)
+    real(rp), intent(in) :: vec(:)
     integer, allocatable :: tmp(:)
     real(rp), allocatable :: tmp_v(:,:)
     integer :: oldsize, newsize
+    integer :: ndim
+    ndim = size(vec)
 
-    ! write(*,*) "   enter bin_add. n_tot:",self% n_tot, self% n_members, self% tag
+    ! write(*,*) "   enter bin_add. n_tot:",self% n_tot
+    ! write(*,*) "     n_members:",self% n_members
+    ! write(*,*) "     tag:",self% tag
     ! write(*,*) bin_tag, vec, idx
     self% tag = bin_tag
     ! if( .not.allocated( self% global_idx_of_member) ) then
     if( self% n_tot == 0 ) then
-       allocate( self% pos_member(1:3,1:self%batchsize))
-       allocate( self% global_idx_of_member(1:self%batchsize))
-       self% n_tot = self%batchsize
+       allocate( self% pos_member(1:ndim,1:bin_batchsize))
+       allocate( self% global_idx_of_member(1:bin_batchsize))
+       self% n_tot = bin_batchsize
        self% n_members = 0
        ! bin_tag = bin_tag + 1
        ! write(*,*) "   allocated new bin. n_tot:", self% n_tot
@@ -529,9 +564,9 @@ contains
     ! realloc
     if( self% n_members + 1 .gt. self% n_tot ) then
        oldsize = self% n_tot
-       newsize = oldsize + self%batchsize
+       newsize = oldsize + bin_batchsize
        ! write(*,*) " $$$ bin realloc", oldsize, newsize
-       ! write(*,*) "  batchsize:",self% batchsize
+       ! write(*,*) "  batchsize:",bin_batchsize
        allocate( tmp, source=self%global_idx_of_member )
        deallocate( self% global_idx_of_member )
        allocate( self%global_idx_of_member(1:newsize) )
@@ -540,8 +575,8 @@ contains
 
        allocate( tmp_v, source=self%pos_member )
        deallocate( self% pos_member )
-       allocate( self% pos_member(1:3,1:newsize) )
-       self% pos_member(1:3,1:oldsize) = tmp_v(:,:)
+       allocate( self% pos_member(1:ndim,1:newsize) )
+       self% pos_member(1:ndim,1:oldsize) = tmp_v(:,:)
        deallocate( tmp_v )
 
        self% n_tot = newsize
@@ -561,13 +596,15 @@ contains
     class( t_neighbour ), intent(inout) :: self
     integer, intent(in)  :: origin_idx   !! index of origin atom
     integer, intent(in)  :: idx          !! index to add to neiglist
-    real(rp), intent(in) :: vec(3)       !! vec to add to veclist
+    real(rp), intent(in) :: vec(:)       !! vec to add to veclist
 
     integer :: newsize, oldsize
     integer, allocatable :: tmp(:)
     real(rp), allocatable :: tmp_v(:,:)
 
-    integer :: i_s
+    integer :: i_s, ndim
+
+    ndim = size(vec)
 
     if( idx .eq. origin_idx ) return
     ! starting index
@@ -609,8 +646,8 @@ contains
        allocate( tmp_v, source=self% veclist )
        deallocate( self% veclist )
        ! call move_alloc( self% veclist, tmp_v )
-       allocate( self% veclist(1:3, 1:newsize) )
-       self% veclist(1:3,1:oldsize) = tmp_v(:,:)
+       allocate( self% veclist(1:ndim, 1:newsize) )
+       self% veclist(1:ndim,1:oldsize) = tmp_v(:,:)
        deallocate( tmp_v )
        ! increment ntot
        self% ntot = newsize
@@ -620,7 +657,7 @@ contains
     self% neiglist( self% head_idx ) = idx
 
     ! add vec to head of veclist
-    self% veclist( 1:3, self% head_idx ) = vec(1:3)
+    self% veclist( 1:ndim, self% head_idx ) = vec(1:ndim)
 
   end subroutine add
 
@@ -628,15 +665,16 @@ contains
 
   pure subroutine periodic(c)
     !--------------------------------
-    ! periodic boundary condition, for 3 dimensional vector input in crist coords.
+    ! periodic boundary condition, for n dimensional vector input in crist coords.
     !--------------------------------
     implicit none
-    real(RP), dimension(3),intent(inout) :: c
-    integer :: i
+    real(RP), dimension(:),intent(inout) :: c
+    integer :: i, ndim
 
-    do i = 1, 3
-       if( c(i) .lt. -0.5 ) c(i) = c(i) + 1.0
-       if( c(i) .ge. 0.5 ) c(i) = c(i) - 1.0
+    ndim = size(c)
+    do i = 1, ndim
+       if( c(i) .lt. -0.5_rp ) c(i) = c(i) + 1.0_rp
+       if( c(i) .ge. 0.5_rp ) c(i) = c(i) - 1.0_rp
     end do
 
     ! c(1) = c(1) - int( (c(1)/ 0.5_rp) )
@@ -654,9 +692,9 @@ contains
     !
     ! invlat is inverse of lat
     implicit none
-    real(rp), intent(inout) :: rij(3)
-    real(rp), intent(in) :: lat(3,3)
-    real(rp), intent(in) :: invlat(3,3)
+    real(rp), intent(inout) :: rij(:)
+    real(rp), intent(in) :: lat(size(rij), size(rij))
+    real(rp), intent(in) :: invlat(size(rij), size(rij))
 
     rij = matmul( lat, rij )
   end subroutine crist_to_cart
@@ -670,13 +708,32 @@ contains
     !
     ! invlat is inverse of lat
     implicit none
-    real(rp), intent(inout) :: rij(3)
-    real(rp), intent(in) :: lat(3,3)
-    real(rp), intent(in) :: invlat(3,3)
+    real(rp), intent(inout) :: rij(:)
+    real(rp), intent(in) :: lat(size(rij), size(rij))
+    real(rp), intent(in) :: invlat(size(rij), size(rij))
 
     rij = matmul( invlat, rij )
   end subroutine cart_to_crist
 
+  pure subroutine inverse2x2( mat, inv )
+    implicit none
+    real(rp), intent(in) :: mat(2,2)
+    real(rp), intent(out) :: inv(2,2)
+
+    real(rp) :: det, invdet
+
+    det = 0.0_rp
+
+    ! calculate the determinant
+    det = mat(1,1)*mat(2,2) - mat(1,2)*mat(2,1)
+    ! inverse determinant
+    invdet = 1.0_rp/det
+    ! inverse matrix elements
+    inv(1,1) = invdet  * mat(2,2)
+    inv(1,2) = -invdet * mat(1,2)
+    inv(2,1) = -invdet * mat(2,1)
+    inv(2,2) = invdet  * mat(1,1)
+  end subroutine inverse2x2
 
   pure subroutine inverse3x3( mat, inv )
     implicit none
@@ -685,17 +742,15 @@ contains
 
     real(rp) :: det, invdet
 
-    det = 0.0_rp
-
     ! calculate the determinant
-    det = det + mat(1,1)*mat(2,2)*mat(3,3) &
+    det =  mat(1,1)*mat(2,2)*mat(3,3) &
          + mat(1,2)*mat(2,3)*mat(3,1) &
          + mat(1,3)*mat(2,1)*mat(3,2) &
          - mat(1,3)*mat(2,2)*mat(3,1) &
          - mat(1,2)*mat(2,1)*mat(3,3) &
          - mat(1,1)*mat(2,3)*mat(3,2)
     ! invert the determinant
-    invdet = 1/det
+    invdet = 1.0_rp/det
     ! calculate the inverse matrix
     inv(1,1) = invdet  * ( mat(2,2)*mat(3,3) - mat(2,3)*mat(3,2) )
     inv(2,1) = -invdet * ( mat(2,1)*mat(3,3) - mat(2,3)*mat(3,1) )
@@ -707,6 +762,23 @@ contains
     inv(2,3) = -invdet * ( mat(1,1)*mat(2,3) - mat(1,3)*mat(2,1) )
     inv(3,3) = invdet  * ( mat(1,1)*mat(2,2) - mat(1,2)*mat(2,1) )
   end subroutine inverse3x3
+
+  pure subroutine inverse( mat, inv )
+    implicit none
+    real(rp), intent(in) :: mat(:,:)
+    real(rp), intent(out) :: inv(size(mat,1), size(mat,1))
+
+    integer :: ndim
+    ndim = size(mat,1)
+    select case( ndim )
+    case( 1 )
+       inv(1,1) = 1.0_rp/mat(1,1)
+    case( 2 )
+       call inverse2x2( mat, inv )
+    case( 3 )
+       call inverse3x3( mat, inv )
+    end select
+  end subroutine inverse
 
   function check1( r, kmax, kadd ) result( add )
     ! check the i component of r
@@ -731,18 +803,18 @@ contains
 
   function check2( r, i, j, kmax, kadd ) result(add)
     ! check components i and j of r simultaneously
-    real(rp), intent(in) :: r(3)
+    real(rp), intent(in) :: r(:)
     integer, intent(in) :: i, j
-    real(rp), intent(in) :: kmax
-    real(rp), intent(out) :: kadd(3)
+    real(rp), intent(in) :: kmax(size(r))
+    real(rp), intent(out) :: kadd(size(r))
     logical :: add
     logical :: ai, aj
-    real(rp) :: k_cp(3)
+    real(rp) :: k_cp(size(r))
     add = .false.
     kadd = 0.0_rp
     k_cp = kadd
-    ai = check1( r(i), kmax, k_cp(i) )
-    aj = check1( r(j), kmax, k_cp(j) )
+    ai = check1( r(i), kmax(i), k_cp(i) )
+    aj = check1( r(j), kmax(j), k_cp(j) )
     if( ai .and. aj ) then
        add = .true.
        kadd = k_cp
@@ -751,24 +823,26 @@ contains
 
   function check3( r, i, j, k, kmax, kadd )result(add)
     ! check components i, j, k of r simultaneously
-    real(rp), intent(in) :: r(3)
+    real(rp), intent(in) :: r(:)
     integer, intent(in) :: i, j, k
-    real(rp), intent(in) :: kmax
-    real(rp), intent(inout) :: kadd(3)
+    real(rp), intent(in) :: kmax(size(r))
+    real(rp), intent(inout) :: kadd(size(r))
     logical :: add
     logical :: ai, aj, ak
-    real(rp) :: k_cp(3)
+    real(rp) :: k_cp(size(r))
     add = .false.
     kadd = 0.0_rp
     k_cp = kadd
-    ai = check1( r(i), kmax, k_cp(i) )
-    aj = check1( r(j), kmax, k_cp(j) )
-    ak = check1( r(k), kmax, k_cp(k) )
+    ai = check1( r(i), kmax(i), k_cp(i) )
+    aj = check1( r(j), kmax(j), k_cp(j) )
+    ak = check1( r(k), kmax(k), k_cp(k) )
     if( ai .and. aj .and. ak )then
        add = .true.
        kadd = k_cp
     end if
   end function check3
+
+
 
   ! bubble sort, modified from rosetta code:
   ! https://rosettacode.org/wiki/Sorting_algorithms/Bubble_sort#Fortran
