@@ -54,9 +54,28 @@ module m_neighbour
      final :: t_neighbour_destroy
   end type t_neighbour
 
-  !> overload the function `compute_binned_pbc` with name `t_neighbour`
+  !> overload the name `t_neighbour` with the `compute_binned_pbc` functions.
+  !! Compute the neighbour list in pbc.
+  !! The idea is to actually detect the boundaries of the box, and set properly shifted
+  !! fake atoms to the other side of the box, and do this on all sides (hi, and lo).
+  !! Then we compute the neighbours by binning, and without pbc.
+  !! The edges of the box are detected by transforming the cutoff `rcut` into cristalline coords,
+  !! and then each atom that is within that distance of any box boundary is considered as box edge,
+  !! and is replicated on the other side of the box (in all applicable directions).
+  !! The bins are computed in reciprocal coords.
+  !!
+  !! call as:
+  !!
+  !!```f90
+  !!  type( t_neighbour ), pointer :: neigh
+  !!    ...
+  !!  neigh => t_neighbour( nat, ityp, pos, lat, rcut )
+  !!    ...
+  !!  deallocate( neigh )
+  !!```
   interface t_neighbour
      procedure :: compute_binned_pbc
+     procedure :: compute_binned_pbc_one
   end interface t_neighbour
 
 
@@ -177,27 +196,8 @@ contains
   end function get_veclist
 
 
-
-
-  function compute_binned_pbc( nat, ityp, pos, lat, rcut, sort_by )result(self)
-    !! Compute the neighbour list in pbc.
-    !! The idea is to actually detect the boundaries of the box, and set properly shifted
-    !! fake atoms to the other side of the box, and do this on all sides (hi, and lo).
-    !! Then we compute the neighbours by binning, and without pbc.
-    !! The edges of the box are detected by transforming the cutoff `rcut` into cristalline coords,
-    !! and then each atom that is within that distance of any box boundary is considered as box edge,
-    !! and is replicated on the other side of the box (in all applicable directions).
-    !! The bins are computed in reciprocal coords.
-    !!
-    !! call as:
-    !!
-    !!```f90
-    !!  type( t_neighbour ), pointer :: neigh
-    !!    ...
-    !!  neigh => t_neighbour( nat, ityp, pos, lat, rcut )
-    !!    ...
-    !!  deallocate( neigh )
-    !!```
+  function compute_binned_pbc_one( nat, ityp, pos, lat, rcut, sort_by ) result(self)
+    !! version where `rcut` is a single value, meaning only one atomic type is expected in `ityp`.
     implicit none
     !> number of atoms
     integer, intent(in) :: nat
@@ -220,8 +220,47 @@ contains
     !> t_neighbour class
     type( t_neighbour ), pointer :: self
 
+    real(rp) :: rrcut(1,1)
+    character(:), allocatable :: s_by
+
+    rrcut(:,:) = rcut
+    s_by = "none"
+    if( present(sort_by))s_by = sort_by
+    self => compute_binned_pbc( nat, ityp, pos, lat, rrcut, s_by )
+  end function compute_binned_pbc_one
+
+
+
+  function compute_binned_pbc( nat, ityp, pos, lat, rcut, sort_by )result(self)
+    !! version where `rcut` can have multiple values, depending on ityp value.
+    implicit none
+    !> number of atoms
+    integer, intent(in) :: nat
+
+    !> integer atomic types (actually unused)
+    integer, intent(in) :: ityp(nat)
+
+    !> atomic positions, shape(ndim, nat)
+    real(rp), intent(in) :: pos(:,:)
+
+    !> lattice vectors in rows, in units of `pos`
+    real(rp), intent(in) :: lat(size(pos,1), size(pos,1))
+
+    !> distance cutoff, in units of `pos`. Is a symmetric square matrix with values of cutoff for the
+    !! corresponding `ityp` - `ityp`. For example `rcut(1,3) = 1.2` means the cutoff distance between
+    !! atoms of type `ityp=1` and `ityp=3` is 1.2. The size of matrix `rcut` is thus related to how many
+    !! different atomic types there are in the `ityp` list.
+    real(rp), intent(in) :: rcut(:,:)
+
+    !> optional string to sort the neighbour list; possible values `"distance"`, `"index"`
+    character(*), intent(in), optional :: sort_by
+
+    !> t_neighbour class
+    type( t_neighbour ), pointer :: self
+
     integer :: i, j, ii, jj, kk, ll, mm
-    real(rp) :: dij
+    integer :: typ_i, typ_j
+    real(rp) :: dij, max_rcut
     real(rp), dimension(size(pos,1), size(pos,1)) :: invlat
     real(rp), dimension(size(pos,1)) :: r, rf, rij, kvec
     integer, dimension(3) :: ibin, addbin ! keep dimension 3, for lower dim they just contain no data
@@ -230,6 +269,7 @@ contains
 
     integer, dimension(3) :: nbins, nbins_check
     integer :: ndim, idim
+    integer :: ntyp
     real(rp), dimension(3) :: kmax, kadd
     real(rp), dimension(3) :: lo_buffer, hi_buffer
     integer :: jj_lb, kk_lb, ll_lb
@@ -240,8 +280,18 @@ contains
     ndim = size( pos,1 )
     ! self% ndim = ndim
 
+    ! number of expected different values in ityp
+    ntyp = size( rcut, 1 )
+#ifdef DEBUG
+    write(*,*) "got ntyp:",ntyp
+#endif
+
     ! cutoff square
-    rcut2 = rcut*rcut
+    max_rcut = maxval(rcut)
+    rcut2 = max_rcut*max_rcut
+#ifdef DEBUG
+    write(*,*) "max_rcut=",max_rcut
+#endif
 
     allocate( t_neighbour::self )
 
@@ -254,7 +304,7 @@ contains
     ! Is probably not optimal, but good-enough for now. Boxes with weird shapes
     ! could be problematic from this point of view (e.g. some ax similar norm
     ! to rcut, while others much larger).
-    kvec(:) = rcut*1.0_rp
+    kvec(:) = max_rcut*1.0_rp
     ! see how this vector transforms to crist coords
     call cart_to_crist(kvec, lat, invlat)
     ! take the maxval as unified cutoff distance in crist coords over all axes
@@ -298,10 +348,12 @@ contains
        hi_buffer(idim) = 1.0_rp-kmax(idim)
     end do
 
-
-    ! write(*,*) "lo_buffer =",lo_buffer
-    ! write(*,*) "hi_buffer =",hi_buffer
-    ! write(*,*) "nbins=",nbins
+#ifdef DEBUG
+    write(*,*) "lo_buffer =",lo_buffer
+    write(*,*) "hi_buffer =",hi_buffer
+    write(*,*) "nbins=",nbins
+    write(*,*) "rcut",rcut
+#endif
 
     ! create bins
     allocate( self% bins(0:nbins(1)+1, 0:nbins(2)+1, 0:nbins(3)+1) )
@@ -321,9 +373,12 @@ contains
        r = r + [( 0.5_rp, idim=1,ndim )]
 
        ! write(*,*)
-       ! write(*,*) " ==> idx i:",i
-       ! write(*,*) r
+#ifdef DEBUG
+       write(*,*) " ==> idx i:",i
+       write(*,*) "pos",pos(:,i)
+       write(*,*) "r",r
        ! write(*,*) r*4
+#endif
 
        ! compute bin of this atom in reciprocal
        ! ibin goes from 1 to nbins.
@@ -334,8 +389,9 @@ contains
           ibin(idim) = nint( r(idim)*nbins(idim) )
        end do
 
-
-       ! write(*,"(a,1x,3i4, 3f9.4)") "ibin:",ibin, r
+#ifdef DEBUG
+       write(*,"(a,1x,3i4, 3f9.4)") "ibin:",ibin, r
+#endif
 
        ! get the cartesian coords of this atom non-shifted
        rf = r
@@ -400,17 +456,45 @@ contains
 
     end do
 
-    ! write(*,*) "start"
+#ifdef DEBUG
+    write(*,*) "start"
+#endif
+
+
+    ! mm = 0
+    ! do ii = 0, nbins(1)+1
+    !    do jj = 0, nbins(2)+1
+    !       do kk = 0, nbins(3)+1
+    !          mm = mm + 1
+    !          do i = 1, self% bins( ii,jj,kk)% n_members
+    !             j = self%bins(ii,jj,kk)% global_idx_of_member(i)
+    !             write(*,*) ityp(j), pos(:,j), j, mm
+    !          end do
+    !       end do
+    !    end do
+    ! end do
 
 
     ! head_idx is the last index in neiglist
     self% head_idx = 0
     do i = 1, nat
 
-       ! write(*,*) "&&& ", i
-       ! write(*,"(a,1x,3f9.4)") "pos",pos(:,i)
+#ifdef DEBUG
+       write(*,*) "&&& ", i
+       write(*,*) "ityp", ityp(i)
+       write(*,"(a,1x,3f9.4)") "pos",pos(:,i)
+#endif
 
        r = pos(:,i)
+
+       ! if rcut is passed as matrix, get the actual atom type
+       if( ntyp > 1 ) then
+          typ_i = ityp(i)
+       else
+          ! rcut has same value for all, ignore type
+          typ_i = 1
+       end if
+
 
        ! shift inside box; range 0:1 in crist
        call cart_to_crist( r, lat, invlat )
@@ -425,12 +509,15 @@ contains
           ibin(idim) = nint( r(idim)*nbins(idim) )
        end do
 
-       ! write(*,*) r
-       ! write(*,"(a,1x,3i4,3f9.4)")"ibin",ibin,r
+#ifdef DEBUG
+       write(*,*) "r", r
+       write(*,"(a,1x,3i4)")"ibin",ibin
+#endif
 
        ! r into cartesian
        call crist_to_cart( r, lat, invlat )
 
+       ! write(*,*) "r cart:",r
        xbin = ibin(1)
        ybin = ibin(2)
        zbin = ibin(3)
@@ -461,9 +548,11 @@ contains
        if( ibin(3) == nbins(3)+1 ) ll_ub = 0
 
        ! write(*,*) i, "ibin",ibin
-       ! write(*,*) "jj_lb", jj_lb, "jj_ub", jj_ub
-       ! write(*,*) "kk_lb", kk_lb, "kk_ub", kk_ub
-       ! write(*,*) "ll_lb", ll_lb, "ll_ub", ll_ub
+#ifdef DEBUG
+       write(*,*) "jj_lb", jj_lb, "jj_ub", jj_ub
+       write(*,*) "kk_lb", kk_lb, "kk_ub", kk_ub
+       write(*,*) "ll_lb", ll_lb, "ll_ub", ll_ub
+#endif
        do jj = jj_lb, jj_ub
           do kk = kk_lb, kk_ub
              do ll = ll_lb, ll_ub
@@ -474,7 +563,9 @@ contains
                 zbin = ibin(3) + ll
 
                 ! loop over the atoms of that bin
-                ! write(*,"(a,1x,3i4,3x,i0)") " >> ", xbin, ybin, zbin, self% bins(xbin,ybin,zbin)%n_members
+#ifdef DEBUG
+                write(*,"(a,1x,3i4,3x,i0)") " >> ", xbin, ybin, zbin, self% bins(xbin,ybin,zbin)%n_members
+#endif
                 do ii = 1, self% bins( xbin, ybin, zbin )% n_members
 
                    ! vector between each member of the bin and r(i)
@@ -484,11 +575,36 @@ contains
                    ! dij = rij(1)*rij(1) + rij(2)*rij(2) + rij(3)*rij(3)
                    dij = dot_product(rij,rij)
 
-                   ! write(*,'(i16,1x,3f9.4,5x,f9.4)') ii, self%bins(xbin,ybin,zbin)%pos_member(:,ii), sqrt(dij)
+#ifdef DEBUG
+                   j = self% bins( xbin, ybin, zbin )% global_idx_of_member(ii)
+                   write(*,'(i16,1x,3f9.4,5x,f9.4,i12,i4)') &
+                        ii, &
+                        self%bins(xbin,ybin,zbin)%pos_member(:,ii), &
+                        sqrt(dij), &
+                        j, &
+                        ityp(j)
+#endif
+
+
                    if( dij .le. rcut2 ) then
                       ! get the true index of the atom j, and add it to neighbour list of i
                       j = self% bins( xbin, ybin, zbin )% global_idx_of_member(ii)
-                      call self% add(i, j, rij )
+                      ! if rcut is passed as matrix, get the actual type of atom
+                      if( ntyp > 1 ) then
+                         typ_j = ityp(j)
+                      else
+                         ! rcut has same value for all
+                         typ_j = 1
+                      end if
+
+                      ! add j based on actual value of rcut, depending on ityp
+#ifdef DEBUG
+                      write(*,*) "typ_i", typ_i, "typ_j", typ_j, "rcut(i,j)",rcut(typ_i, typ_j )
+#endif
+                      if( sqrt(dij) .le. rcut(typ_i, typ_j) ) then
+                         call self% add(i, j, rij )
+                      end if
+
                    end if
 
                 end do
@@ -523,6 +639,7 @@ contains
              end do
              call bubble_sort_r2d( n, d_o )
              self% veclist( 1:3, i_start:i_end ) = self% veclist(1:ndim, nint(d_o(2,:)) )
+             self% neiglist(i_start:i_end) = self% neiglist(nint(d_o(2,:)))
              deallocate( d_o )
           end select
        end if
