@@ -197,12 +197,12 @@ contains
 
 
   function compute_binned_pbc_one( nat, ityp, pos, lat, rcut, sort_by ) result(self)
-    !! version where `rcut` is a single value, meaning only one atomic type is expected in `ityp`.
+    !! version where `rcut` is a single value, meaning the same `rcut` for all `ityp` values.
     implicit none
     !> number of atoms
     integer, intent(in) :: nat
 
-    !> integer atomic types (actually unused)
+    !> integer atomic types
     integer, intent(in) :: ityp(nat)
 
     !> atomic positions, shape(ndim, nat)
@@ -237,7 +237,7 @@ contains
     !> number of atoms
     integer, intent(in) :: nat
 
-    !> integer atomic types (actually unused)
+    !> integer atomic types
     integer, intent(in) :: ityp(nat)
 
     !> atomic positions, shape(ndim, nat)
@@ -381,7 +381,7 @@ contains
 #endif
 
        ! compute bin of this atom in reciprocal
-       ! ibin goes from 1 to nbins.
+       ! ibin goes from 0 to nbins.
        ! for ndim<3, the ibin keeps dimension 3, but has value 1 for extra dims
        ibin(:) = 1
        do idim = 1, ndim
@@ -412,7 +412,7 @@ contains
              rf = r + kadd(1:ndim)
 
              ! which bin to add? assume low-end, if kadd=1.0 then it's high-end
-             addbin(ii) = 1
+             addbin(ii) = 0
              if( kadd(ii) > 0.5_rp ) addbin(ii) = nbins(ii)
 
              call crist_to_cart( rf, lat, invlat )
@@ -428,7 +428,7 @@ contains
              if( check2( r, ii, jj, kmax, kadd ) )then
                 ! which bin: high-end where kadd=1.0; low-end where kadd=-1.0
                 addbin = merge( nbins, addbin, kadd > 0.5_rp )
-                addbin = merge( 1, addbin, kadd < -0.5_rp )
+                addbin = merge( 0, addbin, kadd < -0.5_rp )
                 rf = r + kadd(1:ndim)
                 call crist_to_cart( rf, lat, invlat )
                 call self% bins( addbin(1), addbin(2), addbin(3))% bin_add( 12, i, rf )
@@ -445,7 +445,7 @@ contains
                 if( check3( r, ii, jj, kk, kmax, kadd) ) then
                    ! which bin: high-end where kadd=1.0; low-end where kadd=-1.0
                    addbin = merge( nbins, addbin, kadd > 0.5_rp )
-                   addbin = merge( 1, addbin, kadd < -0.5_rp )
+                   addbin = merge( 0, addbin, kadd < -0.5_rp )
                    rf = r + kadd(1:ndim)
                    call crist_to_cart( rf, lat, invlat )
                    call self% bins( addbin(1), addbin(2), addbin(3))% bin_add( 13, i, rf )
@@ -461,18 +461,23 @@ contains
 #endif
 
 
-    ! mm = 0
-    ! do ii = 0, nbins(1)+1
-    !    do jj = 0, nbins(2)+1
-    !       do kk = 0, nbins(3)+1
-    !          mm = mm + 1
-    !          do i = 1, self% bins( ii,jj,kk)% n_members
-    !             j = self%bins(ii,jj,kk)% global_idx_of_member(i)
-    !             write(*,*) ityp(j), pos(:,j), j, mm
-    !          end do
-    !       end do
-    !    end do
-    ! end do
+#ifdef WRBIN
+
+    mm = 0
+    do ii = 0, nbins(1)+1
+       do jj = 0, nbins(2)+1
+          do kk = 0, nbins(3)+1
+             mm = mm + 1
+             do i = 1, self% bins( ii,jj,kk)% n_members
+                j = self%bins(ii,jj,kk)% global_idx_of_member(i)
+                ! write(*,*) ityp(j), pos(:,j), j, mm
+                write(*,*) ityp(j), self%bins(ii,jj,kk)% pos_member(:,i), j, ii,jj,kk
+             end do
+          end do
+       end do
+    end do
+#endif
+
 
 
     ! head_idx is the last index in neiglist
