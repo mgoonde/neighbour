@@ -210,7 +210,7 @@ contains
     ! create array with just idx
     allocate(inlist(1:1), source=idx )
     if(present(veclist)) then
-       ndim = size(veclist,1)
+       ndim = size(self% veclist,1)
        allocate(v_inlist(1:ndim,1:1) )
        v_inlist(:,:) = 0.0_rp
     end if
