@@ -39,20 +39,38 @@ program main
   neigh => t_neighbour( nat, typ, pos, box, rcut )
 
   !
-  ! get list of neighbors of atom `my_idx`:
+  ! get list of nearest neighbors of atom `my_idx`:
   block
     integer :: my_idx, n_list
     integer, allocatable :: list(:)
-    n_list = neigh% get_list( my_idx, list )
+    n_list = neigh% get_nn( my_idx, list=list )
   end block
 
   !
-  ! get the vectors of neighbours of atom `my_idx`:
+  ! get the vectors of 2nd shell neighbours of atom `my_idx`:
   block
     integer :: my_idx, n_list
     real(wp), allocatable :: veclist(:,:)
-    n_list = neigh% get_veclist( my_idx, veclist )
+    n_list = neigh% get( my_idx, veclist=veclist, nbond=2 )
+  end block
+
+  !
+  ! set an arbitrary list of atomic indices, and expand it by 2 shells
+  block
+    integer :: nshells, n_list
+    integer, allocatable :: list(:)
+    list=[ 3, 15, 87, 32 ]
+    nshells = 2
+    n_list = neigh% expand( nshells, list )
   end block
 
 end program
+```
+
+The cutoff value `rcut` can be an array where each element is a cutoff value between according pairs of atomic types. For example with 4 atomic types:
+
+```f90
+real(wp) :: rcut(4,4)  ! rcut(1,1) is the cutoff between atoms of type 1;
+                       ! rcut(3,2) is the cutoff between atoms of type 3 and 2, etc.
+                       ! the rcut matrix has to be symmetric.
 ```

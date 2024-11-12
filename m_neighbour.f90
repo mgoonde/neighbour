@@ -21,6 +21,8 @@ module m_neighbour
      integer, private :: ntot = 0
      ! current head_idx
      integer, private :: head_idx = 0
+     ! dimension of input
+     ! integer, private :: ndim = 3
 
      !> number of neighbors of atom `i` (excluding self)
      integer, pointer, contiguous :: nneig(:)
@@ -185,9 +187,17 @@ contains
     !! neighbour list has not been computed `n=-1`
     integer :: n
 
-    integer :: nb, i
+    integer :: nb, i, ndim
     integer, allocatable :: inlist(:)
     real(rp), allocatable :: v_inlist(:,:)
+
+    if(  idx .le. 0 .or. &
+         idx .gt. size(self% nneig) .or. &
+         .not.allocated(self%partial_sumlist)) then
+       ! idx out of range, or neiglist not computed
+       n = -1
+       return
+    end if
 
     nb = 1
     if(present(nbond))nb=nbond
@@ -200,7 +210,8 @@ contains
     ! create array with just idx
     allocate(inlist(1:1), source=idx )
     if(present(veclist)) then
-       allocate(v_inlist(1:3,1:1) )
+       ndim = size(veclist,1)
+       allocate(v_inlist(1:ndim,1:1) )
        v_inlist(:,:) = 0.0_rp
     end if
 
@@ -215,7 +226,7 @@ contains
     if( n .lt. 0 ) return
 
     ! first index of `inlist` is idx, remove it for output
-    if(present(veclist)) allocate( veclist(1:3,1:n-1))
+    if(present(veclist)) allocate( veclist(1:ndim,1:n-1))
     if( present(list)) allocate(list(1:n-1))
     do i = 1, n-1
        if( present(veclist)) veclist(:,i) = v_inlist(:,i+1)
@@ -250,9 +261,19 @@ contains
     integer :: ibond, ii, nl_idx, nn
     integer, allocatable :: l_idx(:)
     real(rp), allocatable :: vl_idx(:,:)
-    real(rp) :: origin(3)
+    real(rp), allocatable :: origin(:)
 
-    if( nbond == 0) return
+    if(.not.allocated(self%partial_sumlist)) then
+       ! neiglist not computed
+       n = -1
+       return
+    end if
+
+    if( nbond == 0) then
+       n=0
+       return
+    end if
+
 
     n = size(list)
 
@@ -262,8 +283,10 @@ contains
     work(1:n) = list
     ! vecs
     if(present(veclist)) then
-       allocate( vwork(1:3,1:ntot) )
+       allocate( vwork(1:size(veclist,1),1:ntot) )
        vwork(:,1:n) = veclist
+       ! origin vec
+       allocate(origin(1:size(veclist,1)))
     end if
 
 
@@ -304,7 +327,7 @@ contains
                 ! vec
                 if( present(veclist)) then
                    call move_alloc( vwork, vtmp )
-                   allocate( vwork(1:3,1:ntot) )
+                   allocate( vwork(1:size(veclist,1),1:ntot) )
                    vwork(:, 1:ncur) = vtmp(:,:)
                    deallocate(vtmp)
                 end if
@@ -313,7 +336,7 @@ contains
              work(ncur) = l_idx(ii)
              ! vec
              if( present(veclist)) then
-                vwork(1:3,ncur) = vl_idx(:,ii) + origin
+                vwork(:,ncur) = vl_idx(:,ii) + origin
              end if
 
           end do
@@ -330,8 +353,9 @@ contains
 
     if( present(veclist)) then
        deallocate(veclist)
-       allocate(veclist(1:3,1:ncur))
-       veclist(:,:) = vwork(1:3,1:ncur)
+       allocate(veclist(1:size(vwork,1),1:ncur))
+       veclist(:,:) = vwork(:,1:ncur)
+       deallocate(origin)
     end if
 
   end function expand

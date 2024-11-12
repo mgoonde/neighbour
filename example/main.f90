@@ -14,7 +14,7 @@ program main
   integer :: i, j
   real(rp), allocatable :: veclist(:,:)
   character(256) :: line
-  integer :: n_begin, n_end
+  integer :: n_begin, n_end, nshells
 
 
   ! read xyz
@@ -83,7 +83,8 @@ program main
 
   ! expand this list by 1 bond shell
   ! The result contains also the original list.
-  n = neigh% expand( 1, list, veclist=veclist )
+  nshells = 1
+  n = neigh% expand( nshells, list, veclist=veclist )
   write(*,*) "expanded list:"
   write(*,"(10i8)") list
   write(*,*) n
