@@ -1,6 +1,7 @@
 module m_neighbour
 
   implicit none
+
   integer, parameter :: rp = kind(1.0)    ! modify precision as needed
 
   private
@@ -27,7 +28,7 @@ module m_neighbour
      !> concatenated list of neigbors (excluding `idx`)
      integer, pointer, contiguous :: neiglist(:)
 
-     !> concatenated list of vectors of neiglist in pbc (vector for idx is excluded,
+     !> concatenated list of vectors of neiglist in pbc (vector for idx is exc
      !! but assumed to be placed at `[0.0, 0.0, 0.0]` )
      real(rp), pointer, contiguous :: veclist(:,:)
 
@@ -48,8 +49,9 @@ module m_neighbour
      !> |unused|
      integer, private :: bin_tag=1
    contains
-     procedure :: get_list
-     procedure :: get_veclist
+     procedure :: get_nn
+     procedure :: get
+     procedure :: expand
      procedure, private :: add
      final :: t_neighbour_destroy
   end type t_neighbour
@@ -120,59 +122,23 @@ contains
 
 
 
-  function get_list( self, idx, list )result(n)
-    !! Output the `list` of indices from neiglist, which are neighbours of `idx`.
-    !! Return `n` which i sthe size of `list`
-    !! The index `idx` is NOT included in the returned array `list`.
+
+  function get_nn( self, idx, list, veclist )result(n)
+    !! Get the first neighbor shell of `idx` from neighbour list.
+    !! Return `n` which is the number of neighbors.
+    !! The vector of atom `idx` is NOT included in output.
     class( t_neighbour ), intent(inout) :: self
 
     !> input atomic index
     integer, intent(in)                 :: idx
 
     !> output list of neighbours to atom `idx`
-    integer, allocatable, intent(out)   :: list(:)
+    integer, allocatable, intent(out), optional   :: list(:)
 
-    !> `n`, size of returned `list` is `(n)`; if `idx` is invalid, or the
-    !! neighbour list has not been computed `n=-1`
-    integer :: n
+    !> output list of vectors neighbour to `idx`, which is assumed at [0.0, 0.0, 0.0]
+    real(rp), allocatable, intent(out), optional  :: veclist(:,:)
 
-    integer :: i_start, i_end
-
-    if(  idx .le. 0 .or. &
-         idx .gt. size(self% nneig) .or. &
-         .not.allocated(self%partial_sumlist) ) then
-       ! idx out of range, or list not computed
-       n = -1
-       return
-    end if
-
-    ! The list corresponding to idx is a section of total
-    ! neiglist, between indices: partial_sum(idx-1) and partial_sum(idx)
-
-    ! find indices where the list for idx starts and ends
-    i_end = self% partial_sumlist(idx)
-    i_start = i_end - self% nneig(idx)+1
-
-    n = i_end - i_start + 1
-    allocate( list(1:n), source=self% neiglist(i_start:i_end))
-
-  end function get_list
-
-
-
-  function get_veclist( self, idx, veclist )result(n)
-    !! Output vectors from `veclist`, which are neighbors of `idx`.
-    !! Return `n` which is the size of `veclist`
-    !! The vector of atom `idx` is NOT included, but is placed at (0.0, 0.0, 0.0)
-    class( t_neighbour ), intent(inout) :: self
-
-    !> input atomic index
-    integer, intent(in)                 :: idx
-
-    !> output list of vectors neighbour to `idx`
-    real(rp), allocatable               :: veclist(:,:)
-
-    !> `n`, size of returned `list` is `(n)`; if `idx` is invalid, or the
+    !> `n`, number of first neighbors; if `idx` is invalid, or the
     !! neighbour list has not been computed `n=-1`
     integer :: n
 
@@ -191,9 +157,184 @@ contains
     i_start = i_end - self% nneig(idx)+1
 
     n = i_end - i_start + 1
-    allocate( veclist, source=self% veclist(:, i_start:i_end) )
+    if( present(list)) allocate( list(1:n), source=self% neiglist(i_start:i_end))
+    if(present(veclist)) allocate( veclist, source=self% veclist(:, i_start:i_end) )
 
-  end function get_veclist
+  end function get_nn
+
+
+  function get( self, idx, list, veclist, nbond )result(n)
+    !! Get the neighbor data of `idx` from neighbour list, up to `nbond`.
+    !! Return `n` which is the number of neighbors.
+    !! The vector of atom `idx` is NOT included in output.
+    class( t_neighbour ), intent(inout) :: self
+
+    !> input atomic index
+    integer, intent(in)                 :: idx
+
+    !> output list of neighbours to atom `idx`
+    integer, allocatable, intent(out), optional  :: list(:)
+
+    !> output list of vectors neighbour to `idx`
+    real(rp), allocatable, intent(out), optional :: veclist(:,:)
+
+    !> how many bond shells to get (default=1). If `nbond>1`, the output list is not sorted
+    integer, intent(in), optional :: nbond
+
+    !> `n`, number of first neighbors; if `idx` is invalid, or the
+    !! neighbour list has not been computed `n=-1`
+    integer :: n
+
+    integer :: nb, i
+    integer, allocatable :: inlist(:)
+    real(rp), allocatable :: v_inlist(:,:)
+
+    nb = 1
+    if(present(nbond))nb=nbond
+    if( nb < 1 ) then
+       n = 0
+       return
+    end if
+
+
+    ! create array with just idx
+    allocate(inlist(1:1), source=idx )
+    if(present(veclist)) then
+       allocate(v_inlist(1:3,1:1) )
+       v_inlist(:,:) = 0.0_rp
+    end if
+
+    ! expand it by nb
+    if( present(veclist)) then
+       n = self% expand( nb, inlist, veclist=v_inlist )
+    else
+       n = self% expand( nb, inlist )
+    end if
+
+    ! check error
+    if( n .lt. 0 ) return
+
+    ! first index of `inlist` is idx, remove it for output
+    if(present(veclist)) allocate( veclist(1:3,1:n-1))
+    if( present(list)) allocate(list(1:n-1))
+    do i = 1, n-1
+       if( present(veclist)) veclist(:,i) = v_inlist(:,i+1)
+       if( present(list))  list(i) = inlist(i+1)
+    end do
+    n = n - 1
+
+  end function get
+
+
+  function expand( self, nbond, list, veclist )result(n)
+    !! expand the list in input by `nbond` number of bond shells.
+    implicit none
+    class( t_neighbour ), intent(inout) :: self
+
+    !> number of bons shells to expand
+    integer, intent(in) :: nbond
+
+    !> on input: list to be expanded; on output: expanded list
+    integer, allocatable, intent(inout) :: list(:)
+
+    !> veclist on input; on output modified to include the expansion vectors
+    real(rp), allocatable, intent(inout), optional :: veclist(:,:)
+
+    !> number of elements in output list
+    integer :: n
+
+    integer :: i, ntot, ncur, idx
+    integer, allocatable :: work(:), tmp(:)
+    real(rp), allocatable :: vwork(:,:), vtmp(:,:)
+    integer, parameter :: batchsize=50
+    integer :: ibond, ii, nl_idx, nn
+    integer, allocatable :: l_idx(:)
+    real(rp), allocatable :: vl_idx(:,:)
+    real(rp) :: origin(3)
+
+    if( nbond == 0) return
+
+    n = size(list)
+
+    ntot = n+batchsize
+    ! allocate larger list for work
+    allocate( work(1:ntot))
+    work(1:n) = list
+    ! vecs
+    if(present(veclist)) then
+       allocate( vwork(1:3,1:ntot) )
+       vwork(:,1:n) = veclist
+    end if
+
+
+    ! current size
+    ncur = n
+
+    do ibond = 1, nbond
+       ! go over current work
+       nn = ncur
+       do i = 1, nn
+          ! this idx
+          idx = work(i)
+          ! neighlist of this idx
+          nl_idx = self% get_nn( idx, list=l_idx )
+          ! vec
+          if( present(veclist)) then
+             nl_idx = self% get_nn( idx, veclist=vl_idx )
+             origin = vwork(:,i)
+          end if
+
+          if( nl_idx < 0 ) then
+             ! error
+             n = -1
+             return
+          end if
+
+          ! add to work
+          do ii = 1, nl_idx
+             ! skip if already there
+             if( any(work(1:ncur) .eq. l_idx(ii)) )cycle
+             if( ncur+1 .gt. ntot ) then
+                ! realloc
+                ntot = ntot+batchsize
+                call move_alloc( work, tmp )
+                allocate( work(1:ntot) )
+                work(1:ncur) = tmp(:)
+                deallocate(tmp)
+                ! vec
+                if( present(veclist)) then
+                   call move_alloc( vwork, vtmp )
+                   allocate( vwork(1:3,1:ntot) )
+                   vwork(:, 1:ncur) = vtmp(:,:)
+                   deallocate(vtmp)
+                end if
+             end if
+             ncur = ncur + 1
+             work(ncur) = l_idx(ii)
+             ! vec
+             if( present(veclist)) then
+                vwork(1:3,ncur) = vl_idx(:,ii) + origin
+             end if
+
+          end do
+          deallocate( l_idx )
+          if(present(veclist)) deallocate( vl_idx )
+       end do
+    end do
+
+    ! set output
+    n = ncur
+    deallocate(list)
+    allocate(list(1:ncur))
+    list(:) = work(1:ncur)
+
+    if( present(veclist)) then
+       deallocate(veclist)
+       allocate(veclist(1:3,1:ncur))
+       veclist(:,:) = vwork(1:3,1:ncur)
+    end if
+
+  end function expand
 
 
   function compute_binned_pbc_one( nat, ityp, pos, lat, rcut, sort_by ) result(self)
