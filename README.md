@@ -47,11 +47,11 @@ program main
   end block
 
   !
-  ! get the vectors of 2nd shell neighbours of atom `my_idx`:
+  ! get the vectors of 2nd shell neighbours of atom `my_idx`, including the origin `my_idx`:
   block
     integer :: my_idx, n_list
     real(wp), allocatable :: veclist(:,:)
-    n_list = neigh% get( my_idx, veclist=veclist, nbond=2 )
+    n_list = neigh% get( my_idx, veclist=veclist, nbond=2, include_idx=.true. )
   end block
 
   !

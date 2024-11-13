@@ -57,15 +57,13 @@ program main
 
 
   ! get list of vectors expanded by `nbond=2`
+  ! The list does not include the original idx itself, include it with `include_idx` flag
   write(*,*) "get list and veclist with nbond=2"
-  n = neigh% get( idx, list=list, veclist=veclist, nbond=2 )
+  n = neigh% get( idx, list=list, veclist=veclist, nbond=2, include_idx=.true. )
 
-  ! With `nbond>1` we lose the sorting order of neiglist...
-  ! The list does not include the original idx itself, include it manually if needed
-  write(*,*) n+1
+  ! Note that with `nbond>1` we lose the sorting order of neiglist...
+  write(*,*) n
   write(*,*)
-  ! vector of idx is assumed at zero
-  write(*,*) typ(idx), [0.0_rp, 0.0_rp, 0.0_rp], idx
   do i = 1, n
      write(*,*) typ(list(i)),veclist(:,i), list(i)
   end do

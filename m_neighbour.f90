@@ -123,12 +123,11 @@ contains
   end subroutine t_neighbour_destroy
 
 
-
-
-  function get_nn( self, idx, list, veclist )result(n)
+  function get_nn( self, idx, list, veclist, include_idx )result(n)
     !! Get the first neighbor shell of `idx` from neighbour list.
     !! Return `n` which is the number of neighbors.
-    !! The vector of atom `idx` is NOT included in output.
+    !! The vector of atom `idx` is NOT included in output by default.
+    implicit none
     class( t_neighbour ), intent(inout) :: self
 
     !> input atomic index
@@ -140,11 +139,17 @@ contains
     !> output list of vectors neighbour to `idx`, which is assumed at [0.0, 0.0, 0.0]
     real(rp), allocatable, intent(out), optional  :: veclist(:,:)
 
+    !> flag to include the atom `idx` in output. If .true., it will be on the first
+    !! element of output. Default=.false.
+    logical, intent(in), optional :: include_idx
+
     !> `n`, number of first neighbors; if `idx` is invalid, or the
     !! neighbour list has not been computed `n=-1`
     integer :: n
 
-    integer :: i_start, i_end
+    integer :: i_start, i_end, ndim
+    logical :: inc_idx
+    real(rp), allocatable :: zero(:)
 
     if(  idx .le. 0 .or. &
          idx .gt. size(self% nneig) .or. &
@@ -154,21 +159,50 @@ contains
        return
     end if
 
+    inc_idx = .false.
+    if(present(include_idx))inc_idx=include_idx
+
     ! find indices where the list for idx starts and ends
     i_end = self% partial_sumlist(idx)
     i_start = i_end - self% nneig(idx)+1
 
     n = i_end - i_start + 1
-    if( present(list)) allocate( list(1:n), source=self% neiglist(i_start:i_end))
-    if(present(veclist)) allocate( veclist, source=self% veclist(:, i_start:i_end) )
+
+    ndim = size(self% veclist, 1)
+    if( present(list)) then
+       if( inc_idx ) then
+          ! including idx, add it to start
+          allocate( list(1:n+1) )
+          list(1) = idx
+          list(2:) = self% neiglist(i_start:i_end)
+       else
+          ! not including idx
+          allocate( list(1:n), source=self% neiglist(i_start:i_end))
+       end if
+    end if
+
+    if(present(veclist)) then
+       if( inc_idx ) then
+          ! include idx at start
+          allocate( veclist(1:ndim, 1:n+1) )
+          veclist(:,1) = 0.0
+          veclist(:,2:) = self% veclist(:, i_start:i_end )
+       else
+          allocate( veclist, source=self% veclist(:, i_start:i_end) )
+       end if
+    end if
+
+    if( inc_idx ) n = n + 1
 
   end function get_nn
 
 
-  function get( self, idx, list, veclist, nbond )result(n)
+
+  function get( self, idx, list, veclist, nbond, include_idx )result(n)
     !! Get the neighbor data of `idx` from neighbour list, up to `nbond`.
     !! Return `n` which is the number of neighbors.
-    !! The vector of atom `idx` is NOT included in output.
+    !! The vector of atom `idx` is NOT included in output by default.
+    implicit none
     class( t_neighbour ), intent(inout) :: self
 
     !> input atomic index
@@ -183,6 +217,10 @@ contains
     !> how many bond shells to get (default=1). If `nbond>1`, the output list is not sorted
     integer, intent(in), optional :: nbond
 
+    !> flag to include the atom `idx` in output. If .true., it will be on the first
+    !! element of output. Default=.false.
+    logical, intent(in), optional :: include_idx
+
     !> `n`, number of first neighbors; if `idx` is invalid, or the
     !! neighbour list has not been computed `n=-1`
     integer :: n
@@ -190,6 +228,7 @@ contains
     integer :: nb, i, ndim
     integer, allocatable :: inlist(:)
     real(rp), allocatable :: v_inlist(:,:)
+    logical :: inc_idx
 
     if(  idx .le. 0 .or. &
          idx .gt. size(self% nneig) .or. &
@@ -198,6 +237,9 @@ contains
        n = -1
        return
     end if
+
+    inc_idx = .false.
+    if( present(include_idx))inc_idx = include_idx
 
     nb = 1
     if(present(nbond))nb=nbond
@@ -225,16 +267,36 @@ contains
     ! check error
     if( n .lt. 0 ) return
 
-    ! first index of `inlist` is idx, remove it for output
-    if(present(veclist)) allocate( veclist(1:ndim,1:n-1))
-    if( present(list)) allocate(list(1:n-1))
-    do i = 1, n-1
-       if( present(veclist)) veclist(:,i) = v_inlist(:,i+1)
-       if( present(list))  list(i) = inlist(i+1)
-    end do
-    n = n - 1
+    if(present(veclist)) then
+       if( inc_idx ) then
+          ! include `idx`
+          allocate( veclist, source=v_inlist )
+       else
+          ! first index of `inlist` is idx, remove it for output
+          allocate( veclist(1:ndim,1:n-1))
+          do i = 1, n-1
+             veclist(:,i) = v_inlist(:,i+1)
+          end do
+       end if
+    end if
+
+    if( present(list)) then
+       if( inc_idx ) then
+          ! include `idx`
+          allocate( list, source=inlist )
+       else
+          ! remove `idx` which is first element from output list
+          allocate(list(1:n-1))
+          do i = 1, n-1
+             list(i) = inlist(i+1)
+          end do
+       end if
+    end if
+
+    if( .not. inc_idx ) n = n - 1
 
   end function get
+
 
 
   function expand( self, nbond, list, veclist )result(n)
