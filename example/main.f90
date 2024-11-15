@@ -9,7 +9,7 @@ program main
   real(rp) :: rcut
   real(rp) :: lat(3,3)
   type( t_neighbour ), pointer :: neigh
-  integer, allocatable :: list(:)
+  integer, allocatable :: list(:), ityplist(:)
   integer :: n, idx
   integer :: i, j
   real(rp), allocatable :: veclist(:,:)
@@ -59,15 +59,16 @@ program main
   ! get list of vectors expanded by `nbond=2`
   ! The list does not include the original idx itself, include it with `include_idx` flag
   write(*,*) "get list and veclist with nbond=2"
-  n = neigh% get( idx, list=list, veclist=veclist, nbond=2, include_idx=.true. )
+  n = neigh% get( idx, list=list, ityplist=ityplist, veclist=veclist, nbond=2, include_idx=.true. )
 
   ! Note that with `nbond>1` we lose the sorting order of neiglist...
   write(*,*) n
   write(*,*)
   do i = 1, n
-     write(*,*) typ(list(i)),veclist(:,i), list(i)
+     ! write(*,*) typ(list(i)),veclist(:,i), list(i)
+     write(*,*) ityplist(i), veclist(:,i), list(i)
   end do
-  deallocate( list, veclist )
+  deallocate( list, ityplist, veclist )
 
 
   write(*,*) repeat("-",20)
@@ -82,16 +83,17 @@ program main
   ! expand this list by 1 bond shell
   ! The result contains also the original list.
   nshells = 1
-  n = neigh% expand( nshells, list, veclist=veclist )
+  n = neigh% expand( nshells, list, ityplist=ityplist, veclist=veclist )
   write(*,*) "expanded list:"
   write(*,"(10i8)") list
   write(*,*) n
   write(*,*)
   do i = 1, n
-     write(*,*) typ(list(i)), veclist(:,i), list(i)
+     ! write(*,*) typ(list(i)), veclist(:,i), list(i)
+     write(*,*) ityplist(i), veclist(:,i), list(i)
   end do
 
-  deallocate(list, veclist )
+  deallocate(list, veclist, ityplist )
 
   deallocate( typ, pos )
   deallocate( neigh )

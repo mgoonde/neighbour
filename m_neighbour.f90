@@ -34,6 +34,9 @@ module m_neighbour
      !! but assumed to be placed at `[0.0, 0.0, 0.0]` )
      real(rp), pointer, contiguous :: veclist(:,:)
 
+     !> copy of the types, in same order as input; for output in get()
+     integer, pointer, contiguous :: ityp(:)
+
      !> partial sums of `nneig(:)`, used for retrieving the slices of
      !! arrays `neiglist(:)` and `veclist(:,:)` which correspond to a certain atom
      integer, allocatable :: partial_sumlist(:)
@@ -119,11 +122,12 @@ contains
     if( associated( self% nneig) )deallocate( self% nneig )
     if( associated( self% neiglist) )deallocate( self% neiglist )
     if( associated( self% veclist) )deallocate( self% veclist )
+    if( associated( self% ityp) )deallocate( self% ityp )
     if( allocated( self% partial_sumlist))deallocate( self% partial_sumlist)
   end subroutine t_neighbour_destroy
 
 
-  function get_nn( self, idx, list, veclist, include_idx )result(n)
+  function get_nn( self, idx, list, ityplist, veclist, include_idx )result(n)
     !! Get the first neighbor shell of `idx` from neighbour list.
     !! Return `n` which is the number of neighbors.
     !! The vector of atom `idx` is NOT included in output by default.
@@ -136,6 +140,9 @@ contains
     !> output list of neighbours to atom `idx`
     integer, allocatable, intent(out), optional   :: list(:)
 
+    !> output list of atomic types neighbours to `idx`
+    integer, allocatable, intent(out), optional :: ityplist(:)
+
     !> output list of vectors neighbour to `idx`, which is assumed at [0.0, 0.0, 0.0]
     real(rp), allocatable, intent(out), optional  :: veclist(:,:)
 
@@ -147,7 +154,7 @@ contains
     !! neighbour list has not been computed `n=-1`
     integer :: n
 
-    integer :: i_start, i_end, ndim
+    integer :: i_start, i_end, ndim, i, midx
     logical :: inc_idx
     real(rp), allocatable :: zero(:)
 
@@ -181,6 +188,24 @@ contains
        end if
     end if
 
+    if(present(ityplist)) then
+       if( inc_idx )then
+          ! include idx at start
+          allocate(ityplist(1:n+1))
+          ityplist(1) = self% ityp(idx)
+          do i = 1, n
+             midx = self% neiglist( i_start + i - 1 )
+             ityplist(1+i) = self% ityp(midx)
+          end do
+       else
+          allocate(ityplist(1:n))
+          do i = 1, n
+             midx = self% neiglist( i_start + i - 1)
+             ityplist(i) = self% ityp(midx)
+          end do
+       end if
+    end if
+
     if(present(veclist)) then
        if( inc_idx ) then
           ! include idx at start
@@ -198,7 +223,7 @@ contains
 
 
 
-  function get( self, idx, list, veclist, nbond, include_idx )result(n)
+  function get( self, idx, list, ityplist, veclist, nbond, include_idx )result(n)
     !! Get the neighbor data of `idx` from neighbour list, up to `nbond`.
     !! Return `n` which is the number of neighbors.
     !! The vector of atom `idx` is NOT included in output by default.
@@ -210,6 +235,9 @@ contains
 
     !> output list of neighbours to atom `idx`
     integer, allocatable, intent(out), optional  :: list(:)
+
+    !> output list of atomic types neighbor to `idx`
+    integer, allocatable, intent(out), optional :: ityplist(:)
 
     !> output list of vectors neighbour to `idx`
     real(rp), allocatable, intent(out), optional :: veclist(:,:)
@@ -293,13 +321,27 @@ contains
        end if
     end if
 
+    if( present(ityplist)) then
+       if( inc_idx ) then
+          allocate(ityplist(1:n))
+          do i = 1, n
+             ityplist(i) = self% ityp( inlist(i) )
+          end do
+       else
+          allocate(ityplist(1:n-1))
+          do i = 1, n-1
+             ityplist(i) = self% ityp( inlist(i+1) )
+          end do
+       end if
+    end if
+
     if( .not. inc_idx ) n = n - 1
 
   end function get
 
 
 
-  function expand( self, nbond, list, veclist )result(n)
+  function expand( self, nbond, list, ityplist, veclist )result(n)
     !! expand the list in input by `nbond` number of bond shells.
     implicit none
     class( t_neighbour ), intent(inout) :: self
@@ -307,10 +349,16 @@ contains
     !> number of bons shells to expand
     integer, intent(in) :: nbond
 
-    !> on input: list to be expanded; on output: expanded list
+    !> Assumed allocated on input, containing list to be expanded;
+    !! on output: expanded list
     integer, allocatable, intent(inout) :: list(:)
 
-    !> veclist on input; on output modified to include the expansion vectors
+    !> Optionally allocated on input, containing atomic types list;
+    !! modified to include the atomic types of expansion on output
+    integer, allocatable, intent(inout), optional :: ityplist(:)
+
+    !> Assumed allocated on input, containing veclist;
+    !! on output modified to include the expansion vectors
     real(rp), allocatable, intent(inout), optional :: veclist(:,:)
 
     !> number of elements in output list
@@ -331,13 +379,14 @@ contains
        return
     end if
 
+    ! size of input list
+    n = size(list)
+
     if( nbond == 0) then
-       n=0
+       ! do nothing
        return
     end if
 
-
-    n = size(list)
 
     ntot = n+batchsize
     ! allocate larger list for work
@@ -418,6 +467,14 @@ contains
        allocate(veclist(1:size(vwork,1),1:ncur))
        veclist(:,:) = vwork(:,1:ncur)
        deallocate(origin)
+    end if
+
+    if( present(ityplist))then
+       if(allocated(ityplist))deallocate(ityplist)
+       allocate(ityplist(1:ncur))
+       do i = 1, ncur
+          ityplist(i) = self% ityp( work(i) )
+       end do
     end if
 
   end function expand
@@ -505,7 +562,6 @@ contains
     real(rp), allocatable :: d_o(:,:)
 
     ndim = size( pos,1 )
-    ! self% ndim = ndim
 
     ! number of expected different values in ityp
     ntyp = size( rcut, 1 )
@@ -521,6 +577,9 @@ contains
 #endif
 
     allocate( t_neighbour::self )
+    ! self% ndim = ndim
+    ! copy the types
+    allocate(self% ityp, source=ityp )
 
     ! inverse lattice
     call inverse( lat, invlat)
