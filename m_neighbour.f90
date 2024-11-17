@@ -600,9 +600,12 @@ contains
        kmax(idim) = abs(kvec(idim))
     end do
 
-    ! write(*,*) "kvec:", kvec
+#ifdef DEBUG
+    write(*,*) "kvec:", kvec
     ! write(*,*) 1.0/kvec(1)
-    ! write(*,*) "kmax",kmax
+    write(*,*) "kmax",kmax
+    write(*,*) "norm2(kvec)=",norm2(kvec)
+#endif
 
     ! take the floor() for nbins, since fewer bins means each bin is larger in size
     nbins = floor(1.0_rp/kmax)
@@ -1201,7 +1204,7 @@ contains
     if( r .le. kmax ) then
        kadd = 1.0_rp
        return
-    elseif( r .gt. 1.0-kmax ) then
+    elseif( r .gt. 1.0_rp-kmax ) then
        kadd = -1.0_rp
        return
     end if
