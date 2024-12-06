@@ -124,6 +124,7 @@ contains
     if( associated( self% veclist) )deallocate( self% veclist )
     if( associated( self% ityp) )deallocate( self% ityp )
     if( allocated( self% partial_sumlist))deallocate( self% partial_sumlist)
+    if( allocated( self% bins))deallocate( self% bins )
   end subroutine t_neighbour_destroy
 
 
@@ -381,11 +382,6 @@ contains
 
     ! size of input list
     n = size(list)
-
-    if( nbond == 0) then
-       ! do nothing
-       return
-    end if
 
 
     ntot = n+batchsize
