@@ -57,6 +57,7 @@ module m_neighbour
      procedure :: get_nn
      procedure :: get
      procedure :: expand
+     procedure :: cluster
      procedure, private :: add
      final :: t_neighbour_destroy
   end type t_neighbour
@@ -474,6 +475,70 @@ contains
     end if
 
   end function expand
+
+
+  function cluster( self, idx, list ) result( n )
+    !! check if the input `list` is a cluster graph, and return only the complete graph
+    !! around `idx`. The order of indices might be lost on output.
+    implicit none
+
+    class( t_neighbour ), intent(inout) :: self
+
+    !> starting atom index
+    integer, intent(in) :: idx
+
+    !> on input the possibly cluster-graph to check, on output the complete cluster
+    !! graph around `idx`
+    integer, allocatable, intent(inout) :: list(:)
+
+    !> Number of atoms in output cluster.
+    !! If `idx` is not present in `list`, return zero
+    integer :: n
+
+    integer, allocatable :: work(:), nn(:)
+    integer :: cur_size, batchsize, num, i, n_old
+    logical :: more
+
+    batchsize=size(list,1)
+    ! cur_size can never be more than size of input list, no need to realloc
+
+    allocate( work(1:batchsize), source=-1 )
+
+    more = .true.
+    ! if idx is not in input list, return zero
+    n = 0
+    cur_size = 0
+    if( .not.any(list .eq. idx)) more = .false.
+
+    if( more ) then
+       ! start from first idx
+       cur_size = 1
+       work( cur_size ) = idx
+    end if
+    do while( more )
+       more = .false.
+       ! expand by one bond
+       allocate(nn, source = work(1:cur_size))
+       n_old = cur_size
+       num = self% expand( 1, nn )
+       ! check if expanded nn on input list
+       do i = n_old+1, num
+          if( any(list .eq. nn(i)) ) then
+             ! add that index to work
+             cur_size = cur_size + 1
+             work(cur_size) = nn(i)
+             more = .true.
+          end if
+       end do
+       deallocate(nn)
+    end do
+
+    n = cur_size
+    deallocate(list)
+    allocate(list, source=work(1:cur_size))
+
+    deallocate( work )
+  end function cluster
 
 
   function compute_binned_pbc_one( nat, ityp, pos, lat, rcut, sort_by ) result(self)
