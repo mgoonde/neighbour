@@ -27,7 +27,8 @@ module m_neighbour
      !> number of neighbors of atom `i` (excluding self)
      integer, pointer, contiguous :: nneig(:)
 
-     !> concatenated list of neigbors (excluding `idx`)
+     !> concatenated list of neigbors;
+     !! neiglist(1,:) is the origin `idx`, neiglist(2,:) is its neighbors
      integer, pointer, contiguous :: neiglist(:,:)
 
      !> concatenated list of vectors of neiglist in pbc (vector for idx is exc
@@ -44,6 +45,12 @@ module m_neighbour
      !> list of bins
      type( t_bin ), allocatable, private :: bins(:,:,:)
 
+     !> copy of the input pos
+     real(rp), allocatable, private :: pos(:,:)
+
+     !> copy of the input lat
+     real(rp), private :: lat(3,3)
+
 
      !> |unused| flag to indicate if neighbor list is computed or not
      integer, private :: active = -1
@@ -58,6 +65,7 @@ module m_neighbour
      procedure :: get
      procedure :: expand
      procedure :: cluster
+     procedure :: get_by_rcut
      procedure, private :: add
      final :: t_neighbour_destroy
   end type t_neighbour
@@ -126,6 +134,7 @@ contains
     if( associated( self% ityp) )deallocate( self% ityp )
     if( allocated( self% partial_sumlist))deallocate( self% partial_sumlist)
     if( allocated( self% bins))deallocate( self% bins )
+    if( allocated( self% pos))deallocate(self% pos)
   end subroutine t_neighbour_destroy
 
 
@@ -541,6 +550,104 @@ contains
   end function cluster
 
 
+  function get_by_rcut( self, idx, rcut, list, ityplist, veclist, include_idx )result(n)
+    !! Compute the neighbor data only for particular `idx`, with value of `rcut` that
+    !! is different from the initial computation.
+    implicit none
+    class( t_neighbour ), intent(inout) :: self
+
+    !> atom index
+    integer, intent(in) :: idx
+
+    !> custom rcut
+    real(rp), intent(in) :: rcut
+
+    !> output list of neighbours to atom `idx`
+    integer, allocatable, intent(out), optional :: list(:)
+
+    !> output list of atomic types neighbor to `idx`
+    integer, allocatable, intent(out), optional :: ityplist(:)
+
+    !> output list of vectors neighbour to `idx`
+    real(rp), allocatable, intent(out), optional :: veclist(:,:)
+
+    !> flag to include the atom `idx` in output. If .true., it will be on the first
+    !! element of output. Default=.false.
+    logical, intent(in), optional :: include_idx
+
+    !> output number of neighbours
+    integer :: n
+
+    real(rp) :: invlat(size(self%pos,1), size(self%pos,1))
+    integer :: i, nat
+    real(rp) :: rc(size(self%pos,1)), rij(size(self%pos,1))
+    logical :: inc_idx
+
+    integer :: cur_size
+    integer, parameter :: batchsize=100
+    integer, allocatable :: work(:), tmp(:)
+
+    inc_idx = .false.
+    if(present(include_idx))inc_idx = include_idx
+
+    allocate( work(1:batchsize) )
+    n = 0
+
+    ! include original idx
+    if( inc_idx ) then
+       n = 1
+       work(n) = idx
+    end if
+
+
+    ! the most brute-force algo ... not optimal
+    ! shift the box such that idx is at zero, then compute all dists
+
+    ! need to add check if rcut > lat/2, and increase number of boxes
+
+    nat = size( self% ityp )
+    call inverse( self% lat, invlat)
+
+    rc = self% pos(:, idx)
+    do i = 1, nat
+       if( i .eq. idx ) cycle
+       rij = self% pos(:,i) - rc
+       call cart_to_crist(rij, self% lat, invlat )
+       call periodic(rij)
+       call crist_to_cart(rij, self% lat, invlat )
+       if( norm2(rij) .le. rcut ) then
+          ! write(*,*) i, norm2(rij)
+          ! add to work
+          if( n+1 .gt. size(work) ) then
+             ! check resize
+             cur_size = size(work)
+             call move_alloc( work, tmp )
+             allocate( work( 1:cur_size+batchsize))
+             work(1:cur_size) = tmp(:)
+             deallocate(tmp)
+          end if
+          n = n + 1
+          work(n) = i
+       end if
+    end do
+
+    if( present(list)) allocate( list, source=work(1:n))
+    if( present(ityplist)) allocate( ityplist, source=self% ityp(work(1:n)) )
+    if( present(veclist)) then
+       allocate(veclist, source=self% pos(:,work(1:n)) )
+       ! shift around idx, and do pbc
+       do i = 1, n
+          veclist(:,i) = veclist(:,i) - rc
+          call cart_to_crist( veclist(:,i), self% lat, invlat )
+          call periodic( veclist(:,i) )
+          call crist_to_cart( veclist(:,i), self% lat, invlat )
+       end do
+    end if
+
+  end function get_by_rcut
+
+
+
   function compute_binned_pbc_one( nat, ityp, pos, lat, rcut, sort_by ) result(self)
     !! version where `rcut` is a single value, meaning the same `rcut` for all `ityp` values.
     implicit none
@@ -641,6 +748,8 @@ contains
     ! self% ndim = ndim
     ! copy the types
     allocate(self% ityp, source=ityp )
+    allocate( self% pos, source=pos )
+    self% lat = lat
 
     ! inverse lattice
     call inverse( lat, invlat)
