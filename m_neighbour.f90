@@ -28,7 +28,7 @@ module m_neighbour
      integer, pointer, contiguous :: nneig(:)
 
      !> concatenated list of neigbors (excluding `idx`)
-     integer, pointer, contiguous :: neiglist(:)
+     integer, pointer, contiguous :: neiglist(:,:)
 
      !> concatenated list of vectors of neiglist in pbc (vector for idx is exc
      !! but assumed to be placed at `[0.0, 0.0, 0.0]` )
@@ -183,10 +183,10 @@ contains
           ! including idx, add it to start
           allocate( list(1:n+1) )
           list(1) = idx
-          list(2:) = self% neiglist(i_start:i_end)
+          list(2:) = self% neiglist( 2, i_start:i_end)
        else
           ! not including idx
-          allocate( list(1:n), source=self% neiglist(i_start:i_end))
+          allocate( list(1:n), source=self% neiglist( 2, i_start:i_end))
        end if
     end if
 
@@ -196,13 +196,13 @@ contains
           allocate(ityplist(1:n+1))
           ityplist(1) = self% ityp(idx)
           do i = 1, n
-             midx = self% neiglist( i_start + i - 1 )
+             midx = self% neiglist( 2, i_start + i - 1 )
              ityplist(1+i) = self% ityp(midx)
           end do
        else
           allocate(ityplist(1:n))
           do i = 1, n
-             midx = self% neiglist( i_start + i - 1)
+             midx = self% neiglist( 2, i_start + i - 1)
              ityplist(i) = self% ityp(midx)
           end do
        end if
@@ -680,7 +680,7 @@ contains
     ! nbins_check = ceiling(1.0_rp/kmax)
 
     allocate( self% nneig(1:nat), source=0)
-    allocate( self% neiglist(1:first_alloc*nat) )
+    allocate( self% neiglist(1:2, 1:first_alloc*nat) )
     allocate( self% veclist(1:ndim,1:first_alloc*nat) )
     allocate( self% partial_sumlist(1:nat) )
     self% partial_sumlist(1) = 0
@@ -983,7 +983,7 @@ contains
           n = i_end - i_start + 1
           select case( sort_by )
           case( "index")
-             call bubble_sort_i1d( self% neiglist(i_start:i_end))
+             call bubble_sort_i1d( self% neiglist(2,i_start:i_end))
           case( "distance" )
              allocate( d_o(1:2,1:n) )
              do ii = 1, n
@@ -994,7 +994,7 @@ contains
              end do
              call bubble_sort_r2d( n, d_o )
              self% veclist( 1:3, i_start:i_end ) = self% veclist(1:ndim, nint(d_o(2,:)) )
-             self% neiglist(i_start:i_end) = self% neiglist(nint(d_o(2,:)))
+             self% neiglist(:,i_start:i_end) = self% neiglist(:, nint(d_o(2,:)))
              deallocate( d_o )
           end select
        end if
@@ -1071,7 +1071,7 @@ contains
     real(rp), intent(in) :: vec(:)       !! vec to add to veclist
 
     integer :: newsize, oldsize
-    integer, allocatable :: tmp(:)
+    integer, allocatable :: tmp(:,:)
     real(rp), allocatable :: tmp_v(:,:)
 
     integer :: i_s, ndim
@@ -1083,8 +1083,8 @@ contains
     i_s = 1
     if( origin_idx > 1) i_s = self% partial_sumlist(origin_idx-1) + 1
     ! atom origin_idx already has neiglist:
-    ! write(*,"(*(i5,:,1x))") self% neiglist(i_s:self% head_idx )
-    if( any(self% neiglist(i_s:self% head_idx) .eq. idx) )then
+    ! write(*,"(*(i5,:,1x))") self% neiglist(2,i_s:self% head_idx )
+    if( any(self% neiglist(2,i_s:self% head_idx) .eq. idx) )then
        ! this can happen when box is small compared to rcut, we get the same atom from
        ! the periodic image as its own neighbor, is actually ok, no need to return
 
@@ -1111,8 +1111,8 @@ contains
        allocate( tmp, source=self% neiglist )
        deallocate( self% neiglist )
        ! call move_alloc( self% neiglist, tmp )
-       allocate( self% neiglist(1:newsize) )
-       self% neiglist(1:oldsize) = tmp(:)
+       allocate( self% neiglist(1:2, 1:newsize) )
+       self% neiglist(:, 1:oldsize) = tmp(:,:)
        deallocate( tmp )
        !
        allocate( tmp_v, source=self% veclist )
@@ -1126,7 +1126,8 @@ contains
     end if
 
     ! add idx to head of neiglist
-    self% neiglist( self% head_idx ) = idx
+    self% neiglist( 1, self% head_idx ) = origin_idx
+    self% neiglist( 2, self% head_idx ) = idx
 
     ! add vec to head of veclist
     self% veclist( 1:ndim, self% head_idx ) = vec(1:ndim)
