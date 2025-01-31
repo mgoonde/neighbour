@@ -7,6 +7,7 @@ module m_neighbour
   private
   public :: rp
   public :: t_neighbour
+  public :: t_neighbour_copy
 
   integer, parameter :: &
        bin_batchsize = 200, &
@@ -1475,6 +1476,43 @@ contains
     end do
   end subroutine bubble_sort_r2d
 
+
+  subroutine t_neighbour_copy( from, to )
+    !! Copy the neighbour list structure to another instance.
+    !! Resulting instance is an allocated pointer.
+    !!
+    !! Example call:
+    !!
+    !!```f90
+    !!  type( t_neighbour ), pointer :: neigh
+    !!  type( t_neighbour ), pointer :: neigh_cp
+    !!    ...
+    !!  ! compute neighbor list
+    !!  neigh => t_neighbour( nat, ityp, pos, lat, rcut )
+    !!    ...
+    !!  ! copy to another instance
+    !!  call t_neighbour_copy( neigh, neigh_cp )
+    !!    ...
+    !!  deallocate( neigh )
+    !!  deallocate( neigh_cp )
+    !!```
+    implicit none
+    type( t_neighbour ),          intent(in) :: from
+    type( t_neighbour ), pointer, intent(out) :: to
+
+    allocate( t_neighbour::to )
+
+    to%ntot     = from%ntot
+    to%head_idx = from%head_idx
+    to%lat      = from%lat
+    allocate( to%nneig,           source=from%nneig           )
+    allocate( to%neiglist,        source=from%neiglist        )
+    allocate( to%veclist,         source=from%veclist         )
+    allocate( to%ityp,            source=from%ityp            )
+    allocate( to%partial_sumlist, source=from%partial_sumlist )
+    allocate( to%bins,            source=from%bins            )
+    allocate( to%pos,             source=from%pos             )
+  end subroutine t_neighbour_copy
 
 end module m_neighbour
 
