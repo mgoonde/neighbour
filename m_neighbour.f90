@@ -421,7 +421,7 @@ contains
           nl_idx = self% get_nn( idx, list=l_idx )
           ! vec
           if( present(veclist)) then
-             nl_idx = self% get_nn( idx, veclist=vl_idx )
+             nl_idx = self% get_nn( idx, list=l_idx, veclist=vl_idx )
              origin = vwork(:,i)
           end if
 
@@ -1093,7 +1093,17 @@ contains
           n = i_end - i_start + 1
           select case( sort_by )
           case( "index")
-             call bubble_sort_i1d( self% neiglist(2,i_start:i_end))
+             allocate(d_o(1:2,1:n))
+             do ii = 1, n
+                ! neighbor index
+                d_o(1,ii) = real( self%neiglist(2,i_start+ii-1),rp )
+                ! actual index in array
+                d_o(2,ii) = real(i_start+ii-1, rp)
+             end do
+             call bubble_sort_r2d(n, d_o )
+             self% veclist( 1:3, i_start:i_end ) = self% veclist(1:ndim, nint(d_o(2,:)) )
+             self% neiglist(:,i_start:i_end) = self% neiglist(:, nint(d_o(2,:)))
+             deallocate( d_o )
           case( "distance" )
              allocate( d_o(1:2,1:n) )
              do ii = 1, n
